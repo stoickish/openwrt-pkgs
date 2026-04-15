@@ -125,7 +125,10 @@ unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), Str
 /// Called after /dev/random is opened so the fd is retained but the process
 /// can no longer acquire new privileges.
 fn drop_caps() -> Result<(), String> {
-    // _LINUX_CAPABILITY_VERSION_3: 64-bit capability sets, two 32-bit words each.
+    // _LINUX_CAPABILITY_VERSION_3: opaque kernel magic number (not a bitfield —
+    // it encodes the API version, defined in <linux/capability.h> as 0x20080522).
+    // Selects the v3 ABI which represents capability sets as two 32-bit words,
+    // covering caps 0–63.
     const CAP_VERSION_3: u32 = 0x20080522;
     const CAP_SYS_ADMIN: u32 = 21;
 
