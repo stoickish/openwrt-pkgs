@@ -1,8 +1,8 @@
 #!/bin/sh /etc/rc.common
 
-# START=95: run after network (START=90) so interfaces exist for the WED rules.
-# The script itself waits up to 30s for br-lan.1 as a belt-and-suspenders guard.
-START=95
+# START=13: fan and ASPM config need no network — run right after sysfsutils/sysctl (11).
+# WED offload is handled by /etc/hotplug.d/iface/20-filogic-wed-offload.
+START=13
 STOP=10
 USE_PROCD=1
 

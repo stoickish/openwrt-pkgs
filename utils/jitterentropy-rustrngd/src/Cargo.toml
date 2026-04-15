@@ -3,7 +3,7 @@ name = "jitterentropy-rustrngd"
 version = "0.1.0"
 edition = "2021"
 description = "SP800-90B jitter entropy daemon for OpenWrt"
-license = "GPL-2.0-only"
+license = "BSD-3-Clause"
 
 [[bin]]
 name = "jitterentropy-rustrngd"

@@ -58,4 +58,6 @@ Shell script package, no compilation. Runs once at boot (START=95, after network
 
 **Platform detection:** Fan trip-point tweaks only run when `/tmp/sysinfo/model` contains `sdg-8733` (case-insensitive). All other operations run on every Filogic platform.
 
-**WED flow offload:** Checks for `mt7915e` or `mt7996e` kernel module with `wed_enable=Y`, then installs an nftables `inet wed_offload` table with a flowtable covering all `eth*`, `br-*`, `lan*`, `wan*` interfaces. The script waits up to 30s for `br-lan.1` before proceeding.
+**WED flow offload:** Handled by `/etc/hotplug.d/iface/20-filogic-wed-offload` (installed from `files/filogic-wed-offload.hotplug`), not the main script. Triggers on every `ifup` event — no interface filter. Each run does `destroy table` then recreates the flowtable with whatever `eth*`, `br-*`, `lan*`, `wan*` interfaces currently exist. This means the flowtable grows correctly as interfaces (including VLAN sub-interfaces like `br-lan.1`, `br-lan.3`) come up one by one.
+
+**Init ordering:** `START=13` — fan and ASPM need no network, so the procd service runs right after `sysfsutils`/`sysctl` (both `START=11`).

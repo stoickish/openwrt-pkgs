@@ -1,0 +1,61 @@
+#!/bin/sh
+# /etc/hotplug.d/iface/20-filogic-wed-offload
+#
+# Installs nftables WED FLOWOFFLOAD rules when the LAN interface comes up.
+# Triggered by netifd via the hotplug subsystem — no polling required.
+
+# Re-apply rules on every ifup so the flowtable always reflects the current
+# set of interfaces. destroy+recreate is idempotent — each successive ifup
+# (br-lan.1, br-lan.3, wan, ...) expands the device list as interfaces appear.
+[ "$ACTION" = "ifup" ] || exit 0
+
+LOG="logger -t filogic-wed-offload"
+
+# ── WED hardware flow offload via nftables ───────────────────────────────────
+WED_ENABLED=
+for v in mt7915e mt7996e; do
+	if [ "$(cat /sys/module/$v/parameters/wed_enable 2>/dev/null)" = "Y" ]; then
+		WED_ENABLED=1
+		break
+	fi
+done
+
+if [ -z "$WED_ENABLED" ]; then
+	$LOG "WED not enabled — skipping FLOWOFFLOAD rules"
+	exit 0
+fi
+
+# Build device list from all present ethernet / bridge / LAN / WAN interfaces.
+DEVS=$(
+	for iface in \
+		/sys/class/net/eth* \
+		/sys/class/net/br-* \
+		/sys/class/net/lan* \
+		/sys/class/net/wan*; do
+		[ -e "$iface" ] && printf '%s, ' "${iface##*/}"
+	done | sed 's/, $//'
+)
+
+if [ -z "$DEVS" ]; then
+	$LOG "no eligible devices for flowtable — skipping"
+	exit 0
+fi
+
+$LOG "WED enabled — applying FLOWOFFLOAD rules for: $DEVS"
+
+nft -f - <<EOF
+destroy table inet wed_offload
+table inet wed_offload {
+	flowtable ft {
+		hook ingress priority filter
+		devices = { $DEVS }
+		flags offload
+	}
+
+	chain forward {
+		type filter hook forward priority filter - 1; policy accept;
+		pkttype multicast accept
+		meta l4proto { tcp, udp } ct state established,related flow offload @ft
+	}
+}
+EOF

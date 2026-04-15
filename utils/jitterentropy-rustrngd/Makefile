@@ -4,8 +4,9 @@ PKG_NAME:=jitterentropy-rustrngd
 PKG_VERSION:=0.1.0
 PKG_RELEASE:=1
 
-PKG_LICENSE:=GPL-2.0-only
+PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
+PKG_CONFLICTS:=urngd
 
 # Jitterentropy C library — bundled and statically linked.
 # -O0 is mandatory: optimization eliminates the timing jitter that provides entropy.
