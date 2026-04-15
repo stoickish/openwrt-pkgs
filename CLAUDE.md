@@ -39,6 +39,8 @@ Each package lives under `utils/<name>/` and follows standard OpenWrt convention
 
 Rust daemon replacing `urngd`. Requires OpenWrt 23.05+ (for `rust-package.mk` and `PKG_BUILD_DEPENDS:=rust/host`).
 
+**rust-package.mk location:** `rust-package.mk` lives in the packages feed (`feeds/packages/lang/rust/`), not in `include/`. Third-party feeds must reference it via `$(TOPDIR)/feeds/packages/lang/rust/rust-package.mk` — using `$(INCLUDE_DIR)/rust-package.mk` silently drops the package from the feed index during `feeds update`.
+
 **Build flow:**
 1. `Build/Prepare` copies `src/` to `PKG_BUILD_DIR` and unpacks `jitterentropy-library-<ver>.tar.gz` from `DL_DIR` into `PKG_BUILD_DIR/jitterentropy-library/`
 2. `build.rs` compiles jitterentropy C sources into a static lib via the `cc` crate

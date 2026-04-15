@@ -28,7 +28,7 @@ $(eval $(call Download,jitterentropy-library))
 PKG_BUILD_DEPENDS:=rust/host
 
 include $(INCLUDE_DIR)/package.mk
-include $(INCLUDE_DIR)/rust-package.mk
+include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
 define Package/jitterentropy-rustrngd
   SECTION:=utils
