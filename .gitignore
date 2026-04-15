@@ -1,0 +1,44 @@
+# ── AI coding assistant artifacts ───────────────────────────────────────────
+.claude/
+.serena/
+.cursor/
+.copilot/
+.github/copilot-instructions.md
+.aider*
+.aider.tags.cache*/
+.gemini/
+.codex/
+openai_*.json
+gemini_*.json
+*.ai-cache
+.continue/
+.codeium/
+.tabnine/
+
+# ── Rust build artifacts ─────────────────────────────────────────────────────
+target/
+**/*.rs.bk
+Cargo.lock
+
+# ── C / C++ build artifacts ──────────────────────────────────────────────────
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.elf
+*.map
+*.d
+*.su
+
+# ── OpenWrt build system artifacts ──────────────────────────────────────────
+# (if any part of the OpenWrt tree ends up here)
+build_dir/
+staging_dir/
+dl/
+bin/
+tmp/
+logs/
