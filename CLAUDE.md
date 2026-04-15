@@ -56,7 +56,7 @@ Rust daemon replacing `urngd`. Requires OpenWrt 23.05+ (for `rust-package.mk` an
 
 Shell script package, no compilation. Runs once at boot (START=95, after network at START=90).
 
-**Platform detection:** Fan trip-point tweaks only run when `/tmp/sysinfo/model` contains `sdg-8733` (case-insensitive). All other operations run on every Filogic platform.
+**Platform detection:** Fan trip-point tweaks run when `/proc/device-tree/compatible` matches `sdg-873[34]` (covers sdg-8733, sdg-8733a, sdg-8734). All other operations run on every Filogic platform.
 
 **WED flow offload:** Handled by `/etc/hotplug.d/iface/20-filogic-wed-offload` (installed from `files/filogic-wed-offload.hotplug`), not the main script. Triggers on every `ifup` event — no interface filter. Each run does `destroy table` then recreates the flowtable with whatever `eth*`, `br-*`, `lan*`, `wan*` interfaces currently exist. This means the flowtable grows correctly as interfaces (including VLAN sub-interfaces like `br-lan.1`, `br-lan.3`) come up one by one.
 
