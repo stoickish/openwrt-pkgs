@@ -1,0 +1,25 @@
+#!/bin/sh /etc/rc.common
+
+# START=00 matches urngd — run as early as possible so /dev/random is seeded
+# before any service that needs entropy (SSH key generation, HTTPS, etc.)
+START=00
+STOP=99
+USE_PROCD=1
+
+NAME=jitterentropy-rustrngd
+PROG=/sbin/jitterentropy-rustrngd
+
+start_service() {
+	procd_open_instance
+	procd_set_param command "$PROG"
+	# procd captures stderr; the daemon logs there for visibility in logread
+	procd_set_param stderr 1
+	# Respawn if it crashes; back off after 5 crashes within an hour
+	procd_set_param respawn 3600 5 0
+	procd_close_instance
+}
+
+reload_service() {
+	# SIGTERM causes procd to restart the instance, re-seeding immediately
+	procd_send_signal "$NAME"
+}

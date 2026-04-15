@@ -1,0 +1,19 @@
+#!/bin/sh /etc/rc.common
+
+# START=95: run after network (START=90) so interfaces exist for the WED rules.
+# The script itself waits up to 30s for br-lan.1 as a belt-and-suspenders guard.
+START=95
+STOP=10
+USE_PROCD=1
+
+NAME=filogic-optimizer
+PROG=/usr/sbin/filogic-optimizer
+
+start_service() {
+	procd_open_instance
+	procd_set_param command "$PROG"
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	# Run once at boot; do not respawn
+	procd_close_instance
+}

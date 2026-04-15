@@ -1,0 +1,176 @@
+mod jent_ffi;
+
+use std::io;
+use std::thread;
+use std::time::Duration;
+
+use libc::{O_WRONLY, c_ulong, close, ioctl, open};
+
+// RNDADDENTROPY = _IOW('R', 0x03, int[2])
+//   = (1<<30) | (sizeof(int[2])<<16) | ('R'<<8) | 0x03
+//   = 0x40000000 | 0x00080000 | 0x00005200 | 0x00000003
+//   = 0x40085203
+const RNDADDENTROPY: c_ulong = 0x40085203;
+
+/// Entropy injected per write: 256 bits (32 bytes).
+const ENTROPY_BYTES: usize = 32;
+
+/// Mirrors the kernel's struct rand_pool_info with a fixed 32-byte payload.
+/// The kernel reads buf_size bytes starting at buf[0], so this layout is
+/// equivalent to declaring `__u32 buf[]` with 32 bytes allocated after it.
+#[repr(C)]
+struct RandPoolInfo {
+    entropy_count: i32,           // credited entropy in bits
+    buf_size: i32,                 // payload size in bytes
+    buf: [u8; ENTROPY_BYTES],
+}
+
+/// Read CPU frequency in Hz.
+///
+/// Tries (in order):
+///  1. cpufreq sysfs — most reliable on embedded SoCs
+///  2. /proc/cpuinfo "cpu MHz" / "BogoMIPS" fields
+///  3. Falls back to 1 GHz if neither is available
+fn cpu_hz() -> u64 {
+    // cpufreq reports in kHz
+    if let Ok(s) = std::fs::read_to_string(
+        "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq",
+    ) {
+        if let Ok(khz) = s.trim().parse::<u64>() {
+            return khz * 1_000;
+        }
+    }
+
+    // /proc/cpuinfo fallback
+    if let Ok(s) = std::fs::read_to_string("/proc/cpuinfo") {
+        for line in s.lines() {
+            // "cpu MHz\t: 1800.000" or "BogoMIPS\t: 3600.00"
+            if line.starts_with("cpu MHz") || line.starts_with("BogoMIPS") {
+                if let Some(val) = line.splitn(2, ':').nth(1) {
+                    if let Ok(mhz) = val.trim().parse::<f64>() {
+                        return (mhz * 1_000_000.0) as u64;
+                    }
+                }
+            }
+        }
+    }
+
+    log("WARN: cannot determine CPU speed, defaulting to 1 GHz");
+    1_000_000_000
+}
+
+/// Calculate the reseed interval in seconds.
+///
+/// Derivation:
+///   SP 800-90C mandates max 2^64 output bits per RNG instance.
+///   With max request size of 2^19 bits, that allows 2^45 requests.
+///   We halve that to 2^44 for a 2× safety margin.
+///   At one reseed per CPU clock cycle (worst case), after 2^44 cycles
+///   we must reseed: interval = 2^44 / cpu_hz seconds.
+fn reseed_interval_secs(hz: u64) -> u64 {
+    let numerator: u64 = 1u64 << 44;
+    (numerator / hz).max(1)
+}
+
+fn log(msg: &str) {
+    eprintln!("jitterentropy-rustrngd: {}", msg);
+}
+
+/// Read 256 bits from jitterentropy and inject into /dev/random via RNDADDENTROPY.
+///
+/// # Safety
+/// `ec` must be a valid, non-null entropy collector pointer.
+/// `fd` must be an open file descriptor to /dev/random.
+unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), String> {
+    let mut buf = [0u8; ENTROPY_BYTES];
+
+    let ret = jent_ffi::jent_read_entropy(
+        ec,
+        buf.as_mut_ptr() as *mut libc::c_char,
+        ENTROPY_BYTES,
+    );
+    if ret < 0 {
+        return Err(format!("jent_read_entropy returned {}", ret));
+    }
+
+    let rpi = RandPoolInfo {
+        entropy_count: (ENTROPY_BYTES * 8) as i32,
+        buf_size: ENTROPY_BYTES as i32,
+        buf,
+    };
+
+    let ret = ioctl(fd, RNDADDENTROPY, &rpi as *const RandPoolInfo);
+    if ret < 0 {
+        return Err(format!(
+            "RNDADDENTROPY ioctl failed: {}",
+            io::Error::last_os_error()
+        ));
+    }
+
+    Ok(())
+}
+
+fn main() {
+    let hz = cpu_hz();
+    let interval = reseed_interval_secs(hz);
+
+    log(&format!(
+        "CPU ~{} MHz, reseed interval {}s ({:.1}h)",
+        hz / 1_000_000,
+        interval,
+        interval as f64 / 3600.0,
+    ));
+
+    // jitterentropy self-test — must pass before any use
+    let ret = unsafe { jent_ffi::jent_entropy_init() };
+    if ret != 0 {
+        log(&format!("jent_entropy_init failed: {} — aborting", ret));
+        std::process::exit(1);
+    }
+
+    // Allocate collector in SP800-90B / FIPS-140 compliant mode.
+    // osr=1: use the library's default oversampling rate.
+    let ec = unsafe {
+        jent_ffi::jent_entropy_collector_alloc(1, jent_ffi::JENT_FORCE_FIPS)
+    };
+    if ec.is_null() {
+        log("jent_entropy_collector_alloc failed — aborting");
+        std::process::exit(1);
+    }
+
+    // Open /dev/random for entropy injection
+    let path = b"/dev/random\0";
+    let fd = unsafe { open(path.as_ptr() as *const libc::c_char, O_WRONLY) };
+    if fd < 0 {
+        log(&format!(
+            "cannot open /dev/random: {}",
+            io::Error::last_os_error()
+        ));
+        unsafe { jent_ffi::jent_entropy_collector_free(ec) };
+        std::process::exit(1);
+    }
+
+    // Initial seed — written before the daemon enters its sleep loop so that
+    // /dev/random is unblocked as early as possible in the boot cycle.
+    match unsafe { inject_entropy(ec, fd) } {
+        Ok(()) => log("injected initial 256 bits into /dev/random"),
+        Err(e) => {
+            log(&format!("initial seed failed: {} — aborting", e));
+            unsafe {
+                close(fd);
+                jent_ffi::jent_entropy_collector_free(ec);
+            }
+            std::process::exit(1);
+        }
+    }
+
+    // Periodic reseed loop
+    loop {
+        thread::sleep(Duration::from_secs(interval));
+        match unsafe { inject_entropy(ec, fd) } {
+            Ok(()) => log("reseeded /dev/random (256 bits)"),
+            // Don't exit on periodic reseed failure — log and retry next interval
+            Err(e) => log(&format!("reseed failed: {}", e)),
+        }
+    }
+}

@@ -1,0 +1,92 @@
+#!/bin/sh
+# filogic-optimizer
+# Boot-time performance and power configuration for Filogic-based routers.
+# Runs once at boot via procd. Safe to re-run manually.
+
+LOG="logger -t filogic-optimizer"
+
+# ── PCIe ASPM power saving ──────────────────────────────────────────────────
+if [ -f /sys/module/pcie_aspm/parameters/policy ]; then
+	echo powersave > /sys/module/pcie_aspm/parameters/policy
+	$LOG "PCIe ASPM: powersave"
+fi
+
+# ── Platform-specific: fan trip points ─────────────────────────────────────
+# Only apply on the SDG-8733; skip silently on all other platforms.
+THERMAL_BASE=/sys/devices/virtual/thermal/thermal_zone0
+if grep -qi "sdg-8733" /tmp/sysinfo/model 2>/dev/null; then
+	$LOG "SDG-8733 detected: applying aggressive fan profile"
+	echo 30000 > "$THERMAL_BASE/trip_point_5_temp"
+	echo 32500 > "$THERMAL_BASE/trip_point_4_temp"
+	echo 35000 > "$THERMAL_BASE/trip_point_3_temp"
+	echo 40000 > "$THERMAL_BASE/trip_point_2_temp"
+	echo 70000 > "$THERMAL_BASE/trip_point_1_temp"
+	echo 75000 > "$THERMAL_BASE/trip_point_0_temp"
+fi
+
+# ── Wait for netifd VLAN sub-interfaces ─────────────────────────────────────
+# WED flow offload rules reference br-lan.1; wait up to 30s for netifd to
+# create it before proceeding.
+i=0
+while [ $i -lt 30 ] && [ ! -e /sys/class/net/br-lan.1 ]; do
+	sleep 1
+	i=$((i + 1))
+done
+
+if [ ! -e /sys/class/net/br-lan.1 ]; then
+	$LOG "br-lan.1 absent after 30s — skipping WED offload setup"
+	exit 0
+fi
+
+# ── WED hardware flow offload via nftables ───────────────────────────────────
+# WED (Wireless Ethernet Dispatch) accelerates forwarding in hardware.
+# Check whether it is enabled for any present wireless driver.
+WED_ENABLED=
+for v in mt7915e mt7996e; do
+	if [ "$(cat /sys/module/$v/parameters/wed_enable 2>/dev/null)" = "Y" ]; then
+		WED_ENABLED=1
+		break
+	fi
+done
+
+if [ -z "$WED_ENABLED" ]; then
+	$LOG "WED not enabled — skipping FLOWOFFLOAD rules"
+	exit 0
+fi
+
+# Build device list from all present ethernet / bridge / LAN / WAN interfaces.
+DEVS=$(
+	for iface in \
+		/sys/class/net/eth* \
+		/sys/class/net/br-* \
+		/sys/class/net/lan* \
+		/sys/class/net/wan*; do
+		[ -e "$iface" ] && printf '%s, ' "${iface##*/}"
+	done | sed 's/, $//'
+)
+
+if [ -z "$DEVS" ]; then
+	$LOG "no eligible devices for flowtable — skipping"
+	exit 0
+fi
+
+$LOG "WED enabled — applying FLOWOFFLOAD rules for: $DEVS"
+
+nft -f - <<EOF
+destroy table inet wed_offload
+table inet wed_offload {
+	flowtable ft {
+		hook ingress priority filter
+		devices = { $DEVS }
+		flags offload
+	}
+
+	chain forward {
+		type filter hook forward priority filter - 1; policy accept;
+		pkttype multicast accept
+		meta l4proto { tcp, udp } ct state established,related flow offload @ft
+	}
+}
+EOF
+
+exit 0
