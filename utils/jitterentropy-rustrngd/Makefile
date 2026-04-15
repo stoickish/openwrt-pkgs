@@ -17,7 +17,7 @@ JENT_LIB_SOURCE_URL:=https://github.com/smuellerDD/jitterentropy-library/archive
 
 # TODO: update hash after first successful download:
 #   sha256sum $(DL_DIR)/$(JENT_LIB_SOURCE)
-JENT_LIB_HASH:=skip
+JENT_LIB_HASH:=e2af325cdc7d951a66af782fad4bcdd622e9d8355dd024b7562e2f8b3f6079cd
 
 define Download/jitterentropy-library
   FILE:=$(JENT_LIB_SOURCE)

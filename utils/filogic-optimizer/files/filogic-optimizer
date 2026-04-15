@@ -6,19 +6,20 @@
 # WED flow offload is handled separately in:
 #   /etc/hotplug.d/iface/20-filogic-wed-offload
 
-LOG="logger -t filogic-optimizer"
+log() { logger -t filogic-optimizer "$1"; }
 
 # ── PCIe ASPM power saving ──────────────────────────────────────────────────
 if [ -f /sys/module/pcie_aspm/parameters/policy ]; then
 	echo powersave > /sys/module/pcie_aspm/parameters/policy
-	$LOG "PCIe ASPM: powersave"
+	log "PCIe ASPM: powersave"
 fi
 
 # ── Platform-specific: fan trip points ─────────────────────────────────────
-# Only apply on the SDG-8733; skip silently on all other platforms.
+# Detect via /proc/device-tree/compatible (kernel-owned, not world-writable).
+# The file is NUL-delimited; -a treats it as text so grep matches across NULs.
 THERMAL_BASE=/sys/devices/virtual/thermal/thermal_zone0
-if grep -qi "sdg-8733" /tmp/sysinfo/model 2>/dev/null; then
-	$LOG "SDG-8733 detected: applying aggressive fan profile"
+if grep -qa "sdg-8733" /proc/device-tree/compatible 2>/dev/null; then
+	log "SDG-8733 detected: applying aggressive fan profile"
 	echo 30000 > "$THERMAL_BASE/trip_point_5_temp"
 	echo 32500 > "$THERMAL_BASE/trip_point_4_temp"
 	echo 35000 > "$THERMAL_BASE/trip_point_3_temp"

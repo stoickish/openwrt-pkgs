@@ -7,10 +7,13 @@ use std::time::Duration;
 use libc::{O_WRONLY, c_ulong, close, ioctl, open};
 
 // RNDADDENTROPY = _IOW('R', 0x03, int[2])
-//   = (1<<30) | (sizeof(int[2])<<16) | ('R'<<8) | 0x03
-//   = 0x40000000 | 0x00080000 | 0x00005200 | 0x00000003
-//   = 0x40085203
-const RNDADDENTROPY: c_ulong = 0x40085203;
+// Computed explicitly so the derivation is auditable and a size change is obvious.
+//   direction WRITE = 1  → bits 31:30
+//   size = sizeof(int[2]) = 8 bytes → bits 29:16
+//   type = 'R' = 0x52    → bits 15:8
+//   nr   = 0x03           → bits 7:0
+const RNDADDENTROPY: c_ulong =
+    (1u64 << 30 | 8 << 16 | 0x52 << 8 | 0x03) as c_ulong;
 
 /// Entropy injected per write: 256 bits (32 bytes).
 const ENTROPY_BYTES: usize = 32;
@@ -76,7 +79,11 @@ fn log(msg: &str) {
     eprintln!("jitterentropy-rustrngd: {}", msg);
 }
 
-/// Read 256 bits from jitterentropy and inject into /dev/random via RNDADDENTROPY.
+/// Read up to 256 bits from jitterentropy and inject into /dev/random via RNDADDENTROPY.
+///
+/// Credits only the bytes actually returned by jent_read_entropy — a short read
+/// is valid under health-test constraints, and over-crediting would mislead the
+/// kernel's entropy accounting.
 ///
 /// # Safety
 /// `ec` must be a valid, non-null entropy collector pointer.
@@ -93,9 +100,11 @@ unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), Str
         return Err(format!("jent_read_entropy returned {}", ret));
     }
 
+    // Credit only what was actually written — ret may be less than ENTROPY_BYTES.
+    let actual = ret as usize;
     let rpi = RandPoolInfo {
-        entropy_count: (ENTROPY_BYTES * 8) as i32,
-        buf_size: ENTROPY_BYTES as i32,
+        entropy_count: (actual * 8) as i32,
+        buf_size: actual as i32,
         buf,
     };
 
@@ -105,6 +114,47 @@ unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), Str
             "RNDADDENTROPY ioctl failed: {}",
             io::Error::last_os_error()
         ));
+    }
+
+    Ok(())
+}
+
+/// Drop all Linux capabilities except CAP_SYS_ADMIN (required for RNDADDENTROPY)
+/// and set PR_SET_NO_NEW_PRIVS to prevent re-escalation.
+///
+/// Called after /dev/random is opened so the fd is retained but the process
+/// can no longer acquire new privileges.
+fn drop_caps() -> Result<(), String> {
+    // _LINUX_CAPABILITY_VERSION_3: 64-bit capability sets, two 32-bit words each.
+    const CAP_VERSION_3: u32 = 0x20080522;
+    const CAP_SYS_ADMIN: u32 = 21;
+
+    #[repr(C)]
+    struct CapHeader { version: u32, pid: i32 }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct CapData { effective: u32, permitted: u32, inheritable: u32 }
+
+    let header = CapHeader { version: CAP_VERSION_3, pid: 0 };
+    let mask = 1u32 << CAP_SYS_ADMIN;
+    // Two entries: lower word (caps 0-31) keeps only CAP_SYS_ADMIN; upper word zero.
+    let data = [
+        CapData { effective: mask, permitted: mask, inheritable: 0 },
+        CapData { effective: 0,    permitted: 0,    inheritable: 0 },
+    ];
+
+    let ret = unsafe {
+        libc::syscall(libc::SYS_capset, &header as *const CapHeader, data.as_ptr())
+    };
+    if ret < 0 {
+        return Err(format!("capset failed: {}", io::Error::last_os_error()));
+    }
+
+    // Prevent any exec in the future from regaining privileges via setuid bits.
+    let ret = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+    if ret < 0 {
+        return Err(format!("prctl(PR_SET_NO_NEW_PRIVS) failed: {}", io::Error::last_os_error()));
     }
 
     Ok(())
@@ -149,6 +199,19 @@ fn main() {
         unsafe { jent_ffi::jent_entropy_collector_free(ec) };
         std::process::exit(1);
     }
+
+    // Drop all capabilities except CAP_SYS_ADMIN (needed for RNDADDENTROPY).
+    // Done after the fd is open so we retain the ability to ioctl but shed
+    // everything else (CAP_NET_ADMIN, CAP_SYS_RAWIO, etc.).
+    if let Err(e) = drop_caps() {
+        log(&format!("capability drop failed: {} — aborting", e));
+        unsafe {
+            close(fd);
+            jent_ffi::jent_entropy_collector_free(ec);
+        }
+        std::process::exit(1);
+    }
+    log("capabilities restricted to CAP_SYS_ADMIN");
 
     // Initial seed — written before the daemon enters its sleep loop so that
     // /dev/random is unblocked as early as possible in the boot cycle.

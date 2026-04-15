@@ -9,7 +9,7 @@
 # (br-lan.1, br-lan.3, wan, ...) expands the device list as interfaces appear.
 [ "$ACTION" = "ifup" ] || exit 0
 
-LOG="logger -t filogic-wed-offload"
+log() { logger -t filogic-wed-offload "$1"; }
 
 # ── WED hardware flow offload via nftables ───────────────────────────────────
 WED_ENABLED=
@@ -21,27 +21,33 @@ for v in mt7915e mt7996e; do
 done
 
 if [ -z "$WED_ENABLED" ]; then
-	$LOG "WED not enabled — skipping FLOWOFFLOAD rules"
+	log "WED not enabled — skipping FLOWOFFLOAD rules"
 	exit 0
 fi
 
 # Build device list from all present ethernet / bridge / LAN / WAN interfaces.
-DEVS=$(
-	for iface in \
-		/sys/class/net/eth* \
-		/sys/class/net/br-* \
-		/sys/class/net/lan* \
-		/sys/class/net/wan*; do
-		[ -e "$iface" ] && printf '%s, ' "${iface##*/}"
-	done | sed 's/, $//'
-)
+# Validate each name against a strict allowlist before injecting into nftables.
+DEVS=
+for iface in \
+	/sys/class/net/eth* \
+	/sys/class/net/br-* \
+	/sys/class/net/lan* \
+	/sys/class/net/wan*; do
+	[ -e "$iface" ] || continue
+	name="${iface##*/}"
+	# Allow only alphanumerics, hyphen, underscore, and dot (covers ethX, br-lan.1, etc.)
+	case "$name" in
+		*[!A-Za-z0-9._-]*) log "skipping suspicious interface name: $name"; continue ;;
+	esac
+	DEVS="${DEVS:+$DEVS, }$name"
+done
 
 if [ -z "$DEVS" ]; then
-	$LOG "no eligible devices for flowtable — skipping"
+	log "no eligible devices for flowtable — skipping"
 	exit 0
 fi
 
-$LOG "WED enabled — applying FLOWOFFLOAD rules for: $DEVS"
+log "WED enabled — applying FLOWOFFLOAD rules for: $DEVS"
 
 nft -f - <<EOF
 destroy table inet wed_offload

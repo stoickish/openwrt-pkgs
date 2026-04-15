@@ -50,8 +50,9 @@ fn main() {
         .flag("-std=c11")
         // Enable the internal timer (used when CLOCK_REALTIME is unavailable)
         .define("JENT_CONF_ENABLE_INTERNAL_TIMER", None)
-        // Suppress warnings — we don't own this code
-        .warnings(false)
+        // Keep warnings enabled — security-relevant diagnostics from the C
+        // sources (uninitialised variables, signed overflow, UB) should be visible.
+        .warnings(true)
         .compile("jitterentropy");
 
     println!("cargo:rerun-if-changed=jitterentropy-library/src/");
