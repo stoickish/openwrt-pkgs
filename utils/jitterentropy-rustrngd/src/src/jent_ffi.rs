@@ -4,6 +4,10 @@
 
 use libc::{c_char, c_int, c_uint, size_t, ssize_t};
 
+/// Minimum oversampling rate when JENT_CONF_DISABLE_LOOP_SHUFFLE is set (the
+/// library default). Mirrors the C header define of the same name.
+pub const JENT_MIN_OSR: c_uint = 3;
+
 /// Force FIPS-140 / SP800-90B compliant mode.
 /// This causes jent_read_entropy() to be used (instead of jent_read_entropy_safe),
 /// which is required for SP800-90B compliance since _safe allows a changing
@@ -25,7 +29,7 @@ extern "C" {
     /// Allocate an entropy collector.
     ///
     /// # Parameters
-    /// - `osr`: oversampling rate (1 = no extra oversampling beyond library default)
+    /// - `osr`: oversampling rate; pass JENT_MIN_OSR or higher
     /// - `flags`: bitfield; use JENT_FORCE_FIPS for SP800-90B compliance
     ///
     /// Returns NULL on failure.

@@ -182,9 +182,8 @@ fn main() {
     }
 
     // Allocate collector in SP800-90B / FIPS-140 compliant mode.
-    // osr=1: use the library's default oversampling rate.
     let ec = unsafe {
-        jent_ffi::jent_entropy_collector_alloc(1, jent_ffi::JENT_FORCE_FIPS)
+        jent_ffi::jent_entropy_collector_alloc(jent_ffi::JENT_MIN_OSR, jent_ffi::JENT_FORCE_FIPS)
     };
     if ec.is_null() {
         log("jent_entropy_collector_alloc failed — aborting");
