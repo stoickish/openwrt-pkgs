@@ -64,4 +64,5 @@ define Package/jitterentropy-rustrngd/install
 		$(1)/etc/init.d/$(PKG_NAME)
 endef
 
-$(eval $(call BuildRustPackage,jitterentropy-rustrngd))
+$(eval $(call RustBinPackage,jitterentropy-rustrngd))
+$(eval $(call BuildPackage,jitterentropy-rustrngd))
