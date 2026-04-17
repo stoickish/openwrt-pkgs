@@ -19,11 +19,10 @@ fn main() {
     let src_dir = jent_dir.join("src");
 
     if !src_dir.exists() {
-        panic!(
-            "jitterentropy-library sources not found at {:?}\n\
-             The OpenWrt build system should unpack them there during Build/Prepare.",
-            src_dir
-        );
+        // Sources are unpacked by OpenWrt's Build/Prepare. Outside that
+        // environment (e.g. cargo check / clippy in CI) skip C compilation.
+        println!("cargo:warning=jitterentropy-library not found; skipping C compilation");
+        return;
     }
 
     // Collect all .c sources from jitterentropy-library/src/
