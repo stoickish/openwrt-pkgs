@@ -47,7 +47,7 @@ fn main() {
         .flag("-fPIE")
         .flag("-fstack-protector-strong")
         .flag("--param=ssp-buffer-size=4")
-        .flag("-std=c11")
+        .flag("-std=gnu11")
         // Enable the internal timer (used when CLOCK_REALTIME is unavailable)
         .define("JENT_CONF_ENABLE_INTERNAL_TIMER", None)
         // Keep warnings enabled — security-relevant diagnostics from the C
