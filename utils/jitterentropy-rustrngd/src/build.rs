@@ -4,6 +4,16 @@ use std::path::PathBuf;
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let jent_dir = manifest_dir.join("jitterentropy-library");
+
+    // Strip -O* from TARGET_CFLAGS — cc-rs appends env flags after our flags,
+    // so -Ofast from OpenWrt's TARGET_CFLAGS would override our mandatory -O0.
+    let target_cflags: String = env::var("TARGET_CFLAGS")
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter(|f| !f.starts_with("-O"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    unsafe { std::env::set_var("TARGET_CFLAGS", &target_cflags); }
     let src_dir = jent_dir.join("src");
 
     if !src_dir.exists() {
