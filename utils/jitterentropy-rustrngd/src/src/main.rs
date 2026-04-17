@@ -4,7 +4,7 @@ use std::io;
 use std::thread;
 use std::time::Duration;
 
-use libc::{O_WRONLY, c_ulong, close, ioctl, open};
+use libc::{O_WRONLY, close, ioctl, open};
 
 // RNDADDENTROPY = _IOW('R', 0x03, int[2])
 // Computed explicitly so the derivation is auditable and a size change is obvious.
@@ -12,8 +12,9 @@ use libc::{O_WRONLY, c_ulong, close, ioctl, open};
 //   size = sizeof(int[2]) = 8 bytes → bits 29:16
 //   type = 'R' = 0x52    → bits 15:8
 //   nr   = 0x03           → bits 7:0
-const RNDADDENTROPY: c_ulong =
-    (1u64 << 30 | 8 << 16 | 0x52 << 8 | 0x03) as c_ulong;
+// Result: 0x40085203 — bit 31 is clear, fits in i32.
+const RNDADDENTROPY: i32 =
+    (1i32 << 30) | (8 << 16) | (0x52 << 8) | 0x03;
 
 /// Entropy injected per write: 256 bits (32 bytes).
 const ENTROPY_BYTES: usize = 32;
@@ -108,7 +109,7 @@ unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), Str
         buf,
     };
 
-    let ret = ioctl(fd, RNDADDENTROPY as i32, &rpi as *const RandPoolInfo);
+    let ret = ioctl(fd, RNDADDENTROPY, &rpi as *const RandPoolInfo);
     if ret < 0 {
         return Err(format!(
             "RNDADDENTROPY ioctl failed: {}",
