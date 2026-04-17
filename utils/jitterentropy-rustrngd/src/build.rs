@@ -13,7 +13,9 @@ fn main() {
         .filter(|f| !f.starts_with("-O"))
         .collect::<Vec<_>>()
         .join(" ");
-    unsafe { std::env::set_var("TARGET_CFLAGS", &target_cflags); }
+    unsafe {
+        std::env::set_var("TARGET_CFLAGS", &target_cflags);
+    }
     let src_dir = jent_dir.join("src");
 
     if !src_dir.exists() {
@@ -47,8 +49,8 @@ fn main() {
     //   https://github.com/smuellerDD/jitterentropy-library/blob/master/Makefile
     cc::Build::new()
         .files(&sources)
-        .include(&jent_dir)  // jitterentropy.h lives in the repo root
-        .include(&src_dir)   // internal headers
+        .include(&jent_dir) // jitterentropy.h lives in the repo root
+        .include(&src_dir) // internal headers
         // Optimization: none — mandatory for timing-jitter entropy correctness
         .opt_level(0)
         // Hardening and correctness flags from upstream Makefile

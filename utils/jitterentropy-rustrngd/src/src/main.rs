@@ -4,7 +4,7 @@ use std::io;
 use std::thread;
 use std::time::Duration;
 
-use libc::{O_WRONLY, close, ioctl, open};
+use libc::{close, ioctl, open, O_WRONLY};
 
 // RNDADDENTROPY = _IOW('R', 0x03, int[2])
 // Computed explicitly so the derivation is auditable and a size change is obvious.
@@ -13,8 +13,7 @@ use libc::{O_WRONLY, close, ioctl, open};
 //   type = 'R' = 0x52    → bits 15:8
 //   nr   = 0x03           → bits 7:0
 // Result: 0x40085203 — bit 31 is clear, fits in i32.
-const RNDADDENTROPY: i32 =
-    (1i32 << 30) | (8 << 16) | (0x52 << 8) | 0x03;
+const RNDADDENTROPY: i32 = (1i32 << 30) | (8 << 16) | (0x52 << 8) | 0x03;
 
 /// Entropy injected per write: 256 bits (32 bytes).
 const ENTROPY_BYTES: usize = 32;
@@ -24,8 +23,8 @@ const ENTROPY_BYTES: usize = 32;
 /// equivalent to declaring `__u32 buf[]` with 32 bytes allocated after it.
 #[repr(C)]
 struct RandPoolInfo {
-    entropy_count: i32,           // credited entropy in bits
-    buf_size: i32,                 // payload size in bytes
+    entropy_count: i32, // credited entropy in bits
+    buf_size: i32,      // payload size in bytes
     buf: [u8; ENTROPY_BYTES],
 }
 
@@ -37,9 +36,8 @@ struct RandPoolInfo {
 ///  3. Falls back to 1 GHz if neither is available
 fn cpu_hz() -> u64 {
     // cpufreq reports in kHz
-    if let Ok(s) = std::fs::read_to_string(
-        "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq",
-    ) {
+    if let Ok(s) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
+    {
         if let Ok(khz) = s.trim().parse::<u64>() {
             return khz * 1_000;
         }
@@ -92,11 +90,7 @@ fn log(msg: &str) {
 unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), String> {
     let mut buf = [0u8; ENTROPY_BYTES];
 
-    let ret = jent_ffi::jent_read_entropy(
-        ec,
-        buf.as_mut_ptr() as *mut libc::c_char,
-        ENTROPY_BYTES,
-    );
+    let ret = jent_ffi::jent_read_entropy(ec, buf.as_mut_ptr() as *mut libc::c_char, ENTROPY_BYTES);
     if ret < 0 {
         return Err(format!("jent_read_entropy returned {}", ret));
     }
@@ -134,23 +128,40 @@ fn drop_caps() -> Result<(), String> {
     const CAP_SYS_ADMIN: u32 = 21;
 
     #[repr(C)]
-    struct CapHeader { version: u32, pid: i32 }
+    struct CapHeader {
+        version: u32,
+        pid: i32,
+    }
 
     #[repr(C)]
     #[derive(Copy, Clone)]
-    struct CapData { effective: u32, permitted: u32, inheritable: u32 }
+    struct CapData {
+        effective: u32,
+        permitted: u32,
+        inheritable: u32,
+    }
 
-    let header = CapHeader { version: CAP_VERSION_3, pid: 0 };
+    let header = CapHeader {
+        version: CAP_VERSION_3,
+        pid: 0,
+    };
     let mask = 1u32 << CAP_SYS_ADMIN;
     // Two entries: lower word (caps 0-31) keeps only CAP_SYS_ADMIN; upper word zero.
     let data = [
-        CapData { effective: mask, permitted: mask, inheritable: 0 },
-        CapData { effective: 0,    permitted: 0,    inheritable: 0 },
+        CapData {
+            effective: mask,
+            permitted: mask,
+            inheritable: 0,
+        },
+        CapData {
+            effective: 0,
+            permitted: 0,
+            inheritable: 0,
+        },
     ];
 
-    let ret = unsafe {
-        libc::syscall(libc::SYS_capset, &header as *const CapHeader, data.as_ptr())
-    };
+    let ret =
+        unsafe { libc::syscall(libc::SYS_capset, &header as *const CapHeader, data.as_ptr()) };
     if ret < 0 {
         return Err(format!("capset failed: {}", io::Error::last_os_error()));
     }
@@ -158,7 +169,10 @@ fn drop_caps() -> Result<(), String> {
     // Prevent any exec in the future from regaining privileges via setuid bits.
     let ret = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
     if ret < 0 {
-        return Err(format!("prctl(PR_SET_NO_NEW_PRIVS) failed: {}", io::Error::last_os_error()));
+        return Err(format!(
+            "prctl(PR_SET_NO_NEW_PRIVS) failed: {}",
+            io::Error::last_os_error()
+        ));
     }
 
     Ok(())
