@@ -23,6 +23,3 @@ jobs:
 
       - name: clippy
         run: cargo clippy
-
-      - name: build
-        run: cargo build
