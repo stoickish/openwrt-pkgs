@@ -12,8 +12,9 @@ use libc::{close, ioctl, open, O_WRONLY};
 //   size = sizeof(int[2]) = 8 bytes → bits 29:16
 //   type = 'R' = 0x52    → bits 15:8
 //   nr   = 0x03           → bits 7:0
-// Result: 0x40085203 — bit 31 is clear, fits in i32.
-const RNDADDENTROPY: i32 = (1i32 << 30) | (8 << 16) | (0x52 << 8) | 0x03;
+// Result: 0x40085203 (bit 31 clear, fits in u32). Cast to libc::Ioctl at the call
+// site — the type is c_int (i32) on musl and c_ulong (u64) on glibc.
+const RNDADDENTROPY: u32 = (1u32 << 30) | (8 << 16) | (0x52 << 8) | 0x03;
 
 /// Entropy injected per write: 256 bits (32 bytes).
 const ENTROPY_BYTES: usize = 32;
@@ -103,7 +104,11 @@ unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), Str
         buf,
     };
 
-    let ret = ioctl(fd, RNDADDENTROPY, &rpi as *const RandPoolInfo);
+    let ret = ioctl(
+        fd,
+        RNDADDENTROPY as libc::Ioctl,
+        &rpi as *const RandPoolInfo,
+    );
     if ret < 0 {
         return Err(format!(
             "RNDADDENTROPY ioctl failed: {}",
