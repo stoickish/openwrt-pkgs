@@ -12,7 +12,8 @@ PKG_MAINTAINER:=https://github.com/stoickish
 JENT_LIB_NAME:=jitterentropy-library
 JENT_LIB_VERSION:=3.6.0
 JENT_LIB_SOURCE:=$(JENT_LIB_NAME)-$(JENT_LIB_VERSION).tar.gz
-JENT_LIB_SOURCE_URL:=https://github.com/smuellerDD/jitterentropy-library/archive/refs/tags/v$(JENT_LIB_VERSION).tar.gz
+JENT_LIB_SOURCE_URL:=https://github.com/smuellerDD/jitterentropy-library/archive/refs/tags/
+JENT_LIB_URL_FILE:=v$(JENT_LIB_VERSION).tar.gz
 
 JENT_LIB_HASH:=e2af325cdc7d951a66af782fad4bcdd622e9d8355dd024b7562e2f8b3f6079cd
 
@@ -24,10 +25,10 @@ include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 define Download/jitterentropy-library
   FILE:=$(JENT_LIB_SOURCE)
   URL:=$(JENT_LIB_SOURCE_URL)
+  URL_FILE:=$(JENT_LIB_URL_FILE)
   HASH:=$(JENT_LIB_HASH)
 endef
 $(eval $(call Download,jitterentropy-library))
-$(STAMP_PREPARED): $(DL_DIR)/$(JENT_LIB_SOURCE)
 
 define Package/jitterentropy-rustrngd
   SECTION:=utils
