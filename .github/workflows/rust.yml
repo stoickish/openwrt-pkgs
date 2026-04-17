@@ -1,0 +1,28 @@
+name: Rust
+
+on:
+  push:
+    paths:
+      - 'utils/jitterentropy-rustrngd/src/**'
+  pull_request:
+    paths:
+      - 'utils/jitterentropy-rustrngd/src/**'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: utils/jitterentropy-rustrngd/src
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: fmt
+        run: cargo fmt --check
+
+      - name: clippy
+        run: cargo clippy
+
+      - name: build
+        run: cargo build
