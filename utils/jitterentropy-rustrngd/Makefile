@@ -14,9 +14,12 @@ JENT_LIB_VERSION:=3.6.0
 JENT_LIB_SOURCE:=$(JENT_LIB_NAME)-$(JENT_LIB_VERSION).tar.gz
 JENT_LIB_SOURCE_URL:=https://github.com/smuellerDD/jitterentropy-library/archive/refs/tags/v$(JENT_LIB_VERSION).tar.gz
 
-# TODO: update hash after first successful download:
-#   sha256sum $(DL_DIR)/$(JENT_LIB_SOURCE)
 JENT_LIB_HASH:=e2af325cdc7d951a66af782fad4bcdd622e9d8355dd024b7562e2f8b3f6079cd
+
+PKG_BUILD_DEPENDS:=rust/host
+
+include $(INCLUDE_DIR)/package.mk
+include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
 define Download/jitterentropy-library
   FILE:=$(JENT_LIB_SOURCE)
@@ -24,11 +27,6 @@ define Download/jitterentropy-library
   HASH:=$(JENT_LIB_HASH)
 endef
 $(eval $(call Download,jitterentropy-library))
-
-PKG_BUILD_DEPENDS:=rust/host
-
-include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
 define Package/jitterentropy-rustrngd
   SECTION:=utils
