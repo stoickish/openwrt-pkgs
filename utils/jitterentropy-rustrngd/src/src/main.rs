@@ -49,7 +49,7 @@ fn cpu_hz() -> u64 {
         for line in s.lines() {
             // "cpu MHz\t: 1800.000" or "BogoMIPS\t: 3600.00"
             if line.starts_with("cpu MHz") || line.starts_with("BogoMIPS") {
-                if let Some(val) = line.splitn(2, ':').nth(1) {
+                if let Some((_, val)) = line.split_once(':') {
                     if let Ok(mhz) = val.trim().parse::<f64>() {
                         return (mhz * 1_000_000.0) as u64;
                     }
