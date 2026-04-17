@@ -12,7 +12,7 @@ PKG_MAINTAINER:=https://github.com/stoickish
 JENT_LIB_NAME:=jitterentropy-library
 JENT_LIB_VERSION:=3.6.0
 JENT_LIB_SOURCE:=$(JENT_LIB_NAME)-$(JENT_LIB_VERSION).tar.gz
-JENT_LIB_SOURCE_URL:=https://github.com/smuellerDD/jitterentropy-library/archive/refs/tags/v$(JENT_LIB_VERSION)/
+JENT_LIB_SOURCE_URL:=https://github.com/smuellerDD/jitterentropy-library/archive/refs/tags/
 
 # TODO: update hash after first successful download:
 #   sha256sum $(DL_DIR)/$(JENT_LIB_SOURCE)
@@ -21,6 +21,7 @@ JENT_LIB_HASH:=e2af325cdc7d951a66af782fad4bcdd622e9d8355dd024b7562e2f8b3f6079cd
 define Download/jitterentropy-library
   FILE:=$(JENT_LIB_SOURCE)
   URL:=$(JENT_LIB_SOURCE_URL)
+  URL_FILE:=v$(JENT_LIB_VERSION).tar.gz
   HASH:=$(JENT_LIB_HASH)
 endef
 $(eval $(call Download,jitterentropy-library))
