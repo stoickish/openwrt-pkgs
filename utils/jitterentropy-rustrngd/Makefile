@@ -27,6 +27,7 @@ define Download/jitterentropy-library
   HASH:=$(JENT_LIB_HASH)
 endef
 $(eval $(call Download,jitterentropy-library))
+$(STAMP_PREPARED): $(DL_DIR)/$(JENT_LIB_SOURCE)
 
 define Package/jitterentropy-rustrngd
   SECTION:=utils
