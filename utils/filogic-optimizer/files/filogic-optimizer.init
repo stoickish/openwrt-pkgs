@@ -14,6 +14,8 @@ start_service() {
 	procd_set_param command "$PROG"
 	procd_set_param stdout 1
 	procd_set_param stderr 1
-	# Run once at boot; do not respawn
+	# One-shot: deliberately no procd_set_param respawn. procd only respawns
+	# when the respawn param is set, so omitting it leaves the instance as
+	# fire-and-forget. The script itself logs to syslog via logger(1).
 	procd_close_instance
 }

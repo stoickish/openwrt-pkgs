@@ -14,8 +14,11 @@ start_service() {
 	procd_set_param command "$PROG"
 	# procd captures stderr; the daemon logs there for visibility in logread
 	procd_set_param stderr 1
-	# Respawn if it crashes; back off after 5 crashes within an hour
-	procd_set_param respawn 3600 5 0
+	# Bounded respawn: up to 5 crashes within 3600s, then procd gives up.
+	# Kernel has its own entropy sources (CRNG, in-kernel jitterentropy-rng on
+	# 5.3+, HW RNG if present) — refusing to thrash is preferable to looping
+	# forever on a platform where jitter measurement fails.
+	procd_set_param respawn 3600 5 5
 	procd_close_instance
 }
 
