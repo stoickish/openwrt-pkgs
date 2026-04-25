@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=jitterentropy-rustrngd
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
@@ -40,7 +40,7 @@ endef
 define Package/jitterentropy-rustrngd/description
   Rust RNG daemon that feeds entropy into /dev/random using the jitterentropy
   library as its source. Designed to replace urngd. Operates in SP800-90B /
-  FIPS-140 compliant mode. Injects 256 bits on startup, then reseeds at an
+  FIPS-140 compliant mode. Injects 384 bits on startup, then reseeds at an
   interval derived from CPU speed: interval_secs = 2^44 / cpu_hz.
 endef
 

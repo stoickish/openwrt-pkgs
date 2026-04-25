@@ -12,8 +12,6 @@ PROG=/sbin/jitterentropy-rustrngd
 start_service() {
 	procd_open_instance
 	procd_set_param command "$PROG"
-	# procd captures stderr; the daemon logs there for visibility in logread
-	procd_set_param stderr 1
 	# Bounded respawn: up to 5 crashes within 3600s, then procd gives up.
 	# Kernel has its own entropy sources (CRNG, in-kernel jitterentropy-rng on
 	# 5.3+, HW RNG if present) — refusing to thrash is preferable to looping

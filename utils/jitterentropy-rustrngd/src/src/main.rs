@@ -1,10 +1,14 @@
 mod jent_ffi;
 
+use std::ffi::CString;
 use std::io;
 use std::thread;
 use std::time::Duration;
 
-use libc::{close, ioctl, open, O_WRONLY};
+use libc::{
+    close, ioctl, open, openlog, syslog, LOG_CONS, LOG_DAEMON, LOG_ERR, LOG_INFO, LOG_PID,
+    LOG_WARNING, O_WRONLY,
+};
 
 // RNDADDENTROPY = _IOW('R', 0x03, int[2])
 // Computed explicitly so the derivation is auditable and a size change is obvious.
@@ -12,16 +16,16 @@ use libc::{close, ioctl, open, O_WRONLY};
 //   size = sizeof(int[2]) = 8 bytes → bits 29:16
 //   type = 'R' = 0x52    → bits 15:8
 //   nr   = 0x03           → bits 7:0
-// Result: 0x40085203 (bit 31 clear, positive i32). Cast to libc::Ioctl at the call
-// site — the type is c_int (i32) on musl and c_ulong (u64) on glibc.
+// Result: 0x40085203 (bit 31 clear, positive i32). Cast to the ioctl type at
+// the call site — c_int on musl, c_ulong on glibc.
 const RNDADDENTROPY: i32 = (1i32 << 30) | (8 << 16) | (0x52 << 8) | 0x03;
 
-/// Entropy injected per write: 256 bits (32 bytes).
-const ENTROPY_BYTES: usize = 32;
+/// Entropy injected per write: 384 bits (48 bytes).
+const ENTROPY_BYTES: usize = 48;
 
-/// Mirrors the kernel's struct rand_pool_info with a fixed 32-byte payload.
+/// Mirrors the kernel's struct rand_pool_info with a fixed 48-byte payload.
 /// The kernel reads buf_size bytes starting at buf[0], so this layout is
-/// equivalent to declaring `__u32 buf[]` with 32 bytes allocated after it.
+/// equivalent to declaring `__u32 buf[]` with 48 bytes allocated after it.
 #[repr(C)]
 struct RandPoolInfo {
     entropy_count: i32, // credited entropy in bits
@@ -29,57 +33,32 @@ struct RandPoolInfo {
     buf: [u8; ENTROPY_BYTES],
 }
 
-/// Read CPU frequency in Hz.
-///
-/// Tries (in order):
-///  1. cpufreq sysfs — most reliable on embedded SoCs
-///  2. /proc/cpuinfo "cpu MHz" / "BogoMIPS" fields
-///  3. Falls back to 1 GHz if neither is available
-fn cpu_hz() -> u64 {
-    // cpufreq reports in kHz
-    if let Ok(s) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
-    {
-        if let Ok(khz) = s.trim().parse::<u64>() {
-            return khz * 1_000;
-        }
+// ---------------------------------------------------------------------------
+// Logging — syslog(3) via libc
+// ---------------------------------------------------------------------------
+
+macro_rules! log_err {
+    ($($arg:tt)*) => (log(LOG_ERR, &format!($($arg)*)))
+}
+macro_rules! log_warn {
+    ($($arg:tt)*) => (log(LOG_WARNING, &format!($($arg)*)))
+}
+macro_rules! log_info {
+    ($($arg:tt)*) => (log(LOG_INFO, &format!($($arg)*)))
+}
+
+fn log(level: libc::c_int, msg: &str) {
+    let cmsg = CString::new(msg).unwrap_or_else(|_| CString::new("").unwrap());
+    unsafe {
+        syslog(level, c"%s".as_ptr(), cmsg.as_ptr());
     }
-
-    // /proc/cpuinfo fallback
-    if let Ok(s) = std::fs::read_to_string("/proc/cpuinfo") {
-        for line in s.lines() {
-            // "cpu MHz\t: 1800.000" or "BogoMIPS\t: 3600.00"
-            if line.starts_with("cpu MHz") || line.starts_with("BogoMIPS") {
-                if let Some((_, val)) = line.split_once(':') {
-                    if let Ok(mhz) = val.trim().parse::<f64>() {
-                        return (mhz * 1_000_000.0) as u64;
-                    }
-                }
-            }
-        }
-    }
-
-    log("WARN: cannot determine CPU speed, defaulting to 1 GHz");
-    1_000_000_000
 }
 
-/// Calculate the reseed interval in seconds.
-///
-/// Derivation:
-///   SP 800-90C mandates max 2^64 output bits per RNG instance.
-///   With max request size of 2^19 bits, that allows 2^45 requests.
-///   We halve that to 2^44 for a 2× safety margin.
-///   At one reseed per CPU clock cycle (worst case), after 2^44 cycles
-///   we must reseed: interval = 2^44 / cpu_hz seconds.
-fn reseed_interval_secs(hz: u64) -> u64 {
-    let numerator: u64 = 1u64 << 44;
-    (numerator / hz).max(1)
-}
+// ---------------------------------------------------------------------------
+// Entropy injection
+// ---------------------------------------------------------------------------
 
-fn log(msg: &str) {
-    eprintln!("jitterentropy-rustrngd: {}", msg);
-}
-
-/// Read up to 256 bits from jitterentropy and inject into /dev/random via RNDADDENTROPY.
+/// Read up to 384 bits from jitterentropy and inject into /dev/random via RNDADDENTROPY.
 ///
 /// Credits only the bytes actually returned by jent_read_entropy — a short read
 /// is valid under health-test constraints, and over-crediting would mislead the
@@ -106,7 +85,7 @@ unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), Str
 
     let ret = ioctl(
         fd,
-        RNDADDENTROPY as libc::Ioctl,
+        RNDADDENTROPY as libc::c_ulong,
         &rpi as *const RandPoolInfo,
     );
     if ret < 0 {
@@ -119,23 +98,26 @@ unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), Str
     Ok(())
 }
 
-/// Drop all Linux capabilities except CAP_SYS_ADMIN (required for RNDADDENTROPY)
-/// and set PR_SET_NO_NEW_PRIVS to prevent re-escalation.
-///
-/// Called after /dev/random is opened so the fd is retained but the process
-/// can no longer acquire new privileges.
+// ---------------------------------------------------------------------------
+// Capability dropping (Linux-only)
+// ---------------------------------------------------------------------------
+
+#[cfg(not(target_os = "linux"))]
 fn drop_caps() -> Result<(), String> {
-    // _LINUX_CAPABILITY_VERSION_3: opaque kernel magic number (not a bitfield —
-    // it encodes the API version, defined in <linux/capability.h> as 0x20080522).
-    // Selects the v3 ABI which represents capability sets as two 32-bit words,
-    // covering caps 0–63.
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn drop_caps() -> Result<(), String> {
     const CAP_VERSION_3: u32 = 0x20080522;
     const CAP_SYS_ADMIN: u32 = 21;
+    const PR_SET_NO_NEW_PRIVS: libc::c_int = 36;
+    const SYS_CAPSET: libc::c_int = 90;
 
     #[repr(C)]
     struct CapHeader {
         version: u32,
-        pid: i32,
+        pid: libc::c_int,
     }
 
     #[repr(C)]
@@ -151,7 +133,6 @@ fn drop_caps() -> Result<(), String> {
         pid: 0,
     };
     let mask = 1u32 << CAP_SYS_ADMIN;
-    // Two entries: lower word (caps 0-31) keeps only CAP_SYS_ADMIN; upper word zero.
     let data = [
         CapData {
             effective: mask,
@@ -165,14 +146,26 @@ fn drop_caps() -> Result<(), String> {
         },
     ];
 
-    let ret =
-        unsafe { libc::syscall(libc::SYS_capset, &header as *const CapHeader, data.as_ptr()) };
+    let ret = unsafe {
+        libc::syscall(
+            SYS_CAPSET as libc::c_long,
+            &header as *const CapHeader as *const libc::c_void,
+            data.as_ptr() as *const libc::c_void,
+        )
+    };
     if ret < 0 {
         return Err(format!("capset failed: {}", io::Error::last_os_error()));
     }
 
-    // Prevent any exec in the future from regaining privileges via setuid bits.
-    let ret = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+    let ret = unsafe {
+        libc::prctl(
+            PR_SET_NO_NEW_PRIVS as libc::c_int,
+            1 as libc::c_ulong,
+            0 as libc::c_ulong,
+            0 as libc::c_ulong,
+            0 as libc::c_ulong,
+        )
+    };
     if ret < 0 {
         return Err(format!(
             "prctl(PR_SET_NO_NEW_PRIVS) failed: {}",
@@ -183,21 +176,38 @@ fn drop_caps() -> Result<(), String> {
     Ok(())
 }
 
-fn main() {
-    let hz = cpu_hz();
-    let interval = reseed_interval_secs(hz);
+// ---------------------------------------------------------------------------
+// Reseed interval
+// ---------------------------------------------------------------------------
 
-    log(&format!(
-        "CPU ~{} MHz, reseed interval {}s ({:.1}h)",
-        hz / 1_000_000,
-        interval,
-        interval as f64 / 3600.0,
-    ));
+/// Fixed reseed interval in seconds.
+///
+/// Derived from SP 800-90C max 2^17 output bits and the assumption that
+/// /dev/random output drain is at most 256 bits/s.  2^17 / 256 = 512s.
+const RESEED_INTERVAL_SECS: u64 = 512;
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+fn main() {
+    // Set up syslog before any logging.
+    // LOG_PID includes PID in each message; LOG_CONS routes to console on failure.
+    let ident =
+        CString::new("jitterentropy-rustrngd").unwrap_or_else(|_| CString::new("").unwrap());
+    unsafe {
+        openlog(ident.as_ptr(), LOG_CONS | LOG_PID, LOG_DAEMON);
+    }
+
+    log_info!(
+        "jitterentropy-rustrngd starting, reseed interval {}s",
+        RESEED_INTERVAL_SECS
+    );
 
     // jitterentropy self-test — must pass before any use
     let ret = unsafe { jent_ffi::jent_entropy_init() };
     if ret != 0 {
-        log(&format!("jent_entropy_init failed: {} — aborting", ret));
+        log_err!("jent_entropy_init failed: {} — aborting", ret);
         std::process::exit(1);
     }
 
@@ -206,7 +216,7 @@ fn main() {
         jent_ffi::jent_entropy_collector_alloc(jent_ffi::JENT_MIN_OSR, jent_ffi::JENT_FORCE_FIPS)
     };
     if ec.is_null() {
-        log("jent_entropy_collector_alloc failed — aborting");
+        log_err!("jent_entropy_collector_alloc failed — aborting");
         std::process::exit(1);
     }
 
@@ -214,10 +224,7 @@ fn main() {
     let path = b"/dev/random\0";
     let fd = unsafe { open(path.as_ptr() as *const libc::c_char, O_WRONLY) };
     if fd < 0 {
-        log(&format!(
-            "cannot open /dev/random: {}",
-            io::Error::last_os_error()
-        ));
+        log_err!("cannot open /dev/random: {}", io::Error::last_os_error());
         unsafe { jent_ffi::jent_entropy_collector_free(ec) };
         std::process::exit(1);
     }
@@ -226,21 +233,21 @@ fn main() {
     // Done after the fd is open so we retain the ability to ioctl but shed
     // everything else (CAP_NET_ADMIN, CAP_SYS_RAWIO, etc.).
     if let Err(e) = drop_caps() {
-        log(&format!("capability drop failed: {} — aborting", e));
+        log_err!("capability drop failed: {} — aborting", e);
         unsafe {
             close(fd);
             jent_ffi::jent_entropy_collector_free(ec);
         }
         std::process::exit(1);
     }
-    log("capabilities restricted to CAP_SYS_ADMIN");
+    log_info!("capabilities restricted to CAP_SYS_ADMIN");
 
     // Initial seed — written before the daemon enters its sleep loop so that
     // /dev/random is unblocked as early as possible in the boot cycle.
     match unsafe { inject_entropy(ec, fd) } {
-        Ok(()) => log("injected initial 256 bits into /dev/random"),
+        Ok(()) => log_info!("injected initial 384 bits into /dev/random"),
         Err(e) => {
-            log(&format!("initial seed failed: {} — aborting", e));
+            log_err!("initial seed failed: {} — aborting", e);
             unsafe {
                 close(fd);
                 jent_ffi::jent_entropy_collector_free(ec);
@@ -251,11 +258,11 @@ fn main() {
 
     // Periodic reseed loop
     loop {
-        thread::sleep(Duration::from_secs(interval));
+        thread::sleep(Duration::from_secs(RESEED_INTERVAL_SECS));
         match unsafe { inject_entropy(ec, fd) } {
-            Ok(()) => log("reseeded /dev/random (256 bits)"),
+            Ok(()) => log_info!("reseeded /dev/random (384 bits)"),
             // Don't exit on periodic reseed failure — log and retry next interval
-            Err(e) => log(&format!("reseed failed: {}", e)),
+            Err(e) => log_warn!("reseed failed: {}", e),
         }
     }
 }
