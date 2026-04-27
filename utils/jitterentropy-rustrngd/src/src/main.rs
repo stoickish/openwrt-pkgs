@@ -83,11 +83,7 @@ unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), Str
         buf,
     };
 
-    let ret = ioctl(
-        fd,
-        RNDADDENTROPY as libc::c_ulong,
-        &rpi as *const RandPoolInfo,
-    );
+    let ret = ioctl(fd, RNDADDENTROPY as _, &rpi as *const RandPoolInfo);
     if ret < 0 {
         return Err(format!(
             "RNDADDENTROPY ioctl failed: {}",
