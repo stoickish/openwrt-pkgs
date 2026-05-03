@@ -40,8 +40,7 @@ endef
 define Package/jitterentropy-rustrngd/description
   Rust RNG daemon that feeds entropy into /dev/random using the jitterentropy
   library as its source. Designed to replace urngd. Operates in SP800-90B /
-  FIPS-140 compliant mode. Injects 384 bits on startup, then reseeds at an
-  interval derived from CPU speed: interval_secs = 2^44 / cpu_hz.
+  FIPS-140 compliant mode. Injects 384 bits on startup, then reseeds every 512 seconds.
 endef
 
 define Build/Prepare

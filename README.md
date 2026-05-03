@@ -27,8 +27,7 @@ A Rust-based RNG daemon intended to replace OpenWrt's default `urngd`. Uses the 
 
 **Behavior:**
 - Runs at `START=00` — as early as possible in the boot cycle
-- Injects 256 bits of entropy into `/dev/random` immediately on startup
-- Periodically reseeds at an interval of `2^44 / cpu_hz` seconds (approximately every 2–5 hours depending on CPU speed), providing a 2× margin against the SP 800-90C output limit
+- Injects 384 bits of entropy into `/dev/random` immediately on startup, then reseeds every 512 seconds
 
 **Requirements:** OpenWrt 23.05 or later (Rust toolchain support).
 

@@ -43,16 +43,20 @@ Rust daemon replacing `urngd`. Requires OpenWrt 23.05+ (for `rust-package.mk` an
 
 **Build flow:**
 1. `Build/Prepare` copies `src/` to `PKG_BUILD_DIR` and unpacks `jitterentropy-library-<ver>.tar.gz` from `DL_DIR` into `PKG_BUILD_DIR/jitterentropy-library/`
-2. `build.rs` compiles jitterentropy C sources into a static lib via the `cc` crate
+2. `build.rs` clears `TARGET_CFLAGS` and `CFLAGS` (to exclude all OpenWrt compiler flags), parses CFLAGS from `jitterentropy-library/Makefile`, then compiles the C sources into a static lib via the `cc` crate
 3. Cargo links the static lib and produces the binary
 
-**Critical constraint:** `build.rs` compiles jitterentropy with `-O0`. This is non-negotiable — any optimization eliminates the CPU timing jitter that is the entropy source. Do not change this.
+**Critical constraints:**
+- All OpenWrt `TARGET_CFLAGS`/`CFLAGS` are discarded — cc-rs appends environment flags *after* programmatic flags, which would override mandatory settings like `-O0`. There is no OpenWrt built-in way to opt a single package out, so the env vars are cleared in `build.rs`.
+- CFLAGS are parsed from the upstream `jitterentropy-library/Makefile` at build time rather than hard-coded. The Makefile is a `cargo:rerun-if-changed` dependency so flag changes in future library releases trigger automatic rebuilds.
+- `-O0` is mandatory — any optimization eliminates the CPU timing jitter that is the entropy source. Do not change this.
+- `-fstack-protector-strong` is hard-coded separately because it lives inside a Makefile conditional block (`ENABLE_STACK_PROTECTOR=1` && GCC >= 4.9) that the simple Makefile parser cannot evaluate.
 
 **jitterentropy-library version:** Declared as `JENT_LIB_VERSION` in the Makefile. After changing the version, update `JENT_LIB_HASH` with the actual SHA-256 of the downloaded tarball (currently `skip` for development).
 
 **FFI surface** (`src/src/jent_ffi.rs`): only the four symbols needed — `jent_entropy_init`, `jent_entropy_collector_alloc`, `jent_entropy_collector_free`, `jent_read_entropy`. SP800-90B compliance requires `jent_read_entropy` (not `_safe`) and `JENT_FORCE_FIPS` flag.
 
-**Reseed interval math:** `2^44 / cpu_hz_seconds`. CPU frequency is read from cpufreq sysfs, then `/proc/cpuinfo`, then defaults to 1 GHz. The interval is logged to stderr on startup (captured by procd → visible in `logread`).
+**Reseed interval:** 512 seconds (fixed). Chosen because the `/dev/random` output drain is at most 256 bits/s and 384 bits/s injection rate means `384/256 × 512 = 768` seconds of safety margin — the kernel could run uninterrupted for ~768 seconds before depleting our entropy contribution.
 
 ## filogic-optimizer
 
