@@ -232,6 +232,14 @@ fn main() {
         RESEED_INTERVAL_SECS
     );
 
+    // SHA-3 known-answer test — must pass before any use
+    let ret = unsafe { jent_ffi::jent_sha3_tester() };
+    if ret != 0 {
+        log_err!("jent_sha3_tester failed: {} — aborting", ret);
+        std::process::exit(1);
+    }
+    log_info!("jent_sha3_tester passed");
+
     // jitterentropy self-test — must pass before any use
     let ret = unsafe { jent_ffi::jent_entropy_init() };
     if ret != 0 {

@@ -22,6 +22,10 @@ pub struct RandData {
 }
 
 extern "C" {
+    /// Run the SHA-3 known-answer test. Must be called before jent_entropy_init().
+    /// Returns 0 on success, nonzero on failure.
+    pub fn jent_sha3_tester() -> c_int;
+
     /// Run the jitterentropy self-test. Must be called before alloc().
     /// Returns 0 on success, nonzero on failure.
     pub fn jent_entropy_init() -> c_int;
