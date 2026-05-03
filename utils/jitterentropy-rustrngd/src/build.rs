@@ -1,21 +1,88 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Parse CFLAGS from the upstream jitterentropy-library Makefile.
+///
+/// Reads lines starting with `CFLAGS` followed by `=`, `:=`, `?=`, or `+=`.
+/// Skips lines containing `$(...)` variable expansions and lines inside
+/// conditional blocks (those are handled explicitly by the caller).
+fn parse_cflags(makefile: &Path) -> Vec<String> {
+    let content = match std::fs::read_to_string(makefile) {
+        Ok(c) => c,
+        Err(e) => {
+            println!("cargo:warning=failed to read {:?}: {}", makefile, e);
+            return Vec::new();
+        }
+    };
+
+    let mut flags: Vec<String> = Vec::new();
+    let mut in_conditional = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Skip conditional blocks — caller handles the known cases explicitly.
+        if trimmed.starts_with("ifeq") || trimmed.starts_with("ifneq") || trimmed.starts_with("ifdef") {
+            in_conditional = true;
+            continue;
+        }
+        if in_conditional {
+            if trimmed.starts_with("endif") {
+                in_conditional = false;
+            }
+            continue;
+        }
+
+        // Match CFLAGS =, :=, ?=, or += assignments.
+        let rest = match trimmed.strip_prefix("CFLAGS") {
+            Some(r) => r,
+            None => continue,
+        };
+
+        let flags_str = rest
+            .strip_prefix(" +=")
+            .or_else(|| rest.strip_prefix(" ?="))
+            .or_else(|| rest.strip_prefix(" :="))
+            .or_else(|| rest.strip_prefix("="))
+            .map(|s| s.trim());
+
+        let flags_str = match flags_str {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+
+        // Skip lines with $(...) expansions (e.g. $(foreach ...) for -I flags).
+        if flags_str.contains("$(") {
+            continue;
+        }
+
+        for flag in flags_str.split_whitespace() {
+            let flag = flag.to_string();
+            if !flags.contains(&flag) {
+                flags.push(flag);
+            }
+        }
+    }
+
+    flags
+}
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let jent_dir = manifest_dir.join("jitterentropy-library");
 
-    // Strip -O* from TARGET_CFLAGS — cc-rs appends env flags after our flags,
-    // so -Ofast from OpenWrt's TARGET_CFLAGS would override our mandatory -O0.
-    let target_cflags: String = env::var("TARGET_CFLAGS")
-        .unwrap_or_default()
-        .split_whitespace()
-        .filter(|f| !f.starts_with("-O"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Discard ALL OpenWrt CFLAGS.
+    //
+    // OpenWrt exports TARGET_CFLAGS into the Cargo build environment.  cc-rs
+    // reads TARGET_CFLAGS (and CFLAGS as fallback) and appends them *after*
+    // programmatic flags, so -Ofast and friends would override mandatory
+    // jitterentropy flags.  There is no OpenWrt built-in way to opt a single
+    // package out — clearing the env vars is the only mechanism.
     unsafe {
-        std::env::set_var("TARGET_CFLAGS", &target_cflags);
+        std::env::set_var("TARGET_CFLAGS", "");
+        std::env::set_var("CFLAGS", "");
     }
+
     let src_dir = jent_dir.join("src");
 
     if !src_dir.exists() {
@@ -37,35 +104,40 @@ fn main() {
         panic!("no .c sources found in {:?}", src_dir);
     }
 
-    // Build with the exact flags required by jitterentropy.
-    //
-    // -O0 is MANDATORY. The entropy source relies on CPU timing jitter.
-    // Any optimization can make the compiler eliminate or reorder the
-    // timing-sensitive loops, destroying the entropy source entirely.
-    //
-    // These flags replicate the upstream jitterentropy-library Makefile
-    // defaults exactly as documented in:
-    //   https://github.com/smuellerDD/jitterentropy-library/blob/master/Makefile
-    cc::Build::new()
+    let mut build = cc::Build::new();
+    build
         .files(&sources)
-        .include(&jent_dir) // jitterentropy.h lives in the repo root
-        .include(&src_dir) // internal headers
-        // Optimization: none — mandatory for timing-jitter entropy correctness
+        .include(&jent_dir)
+        .include(&src_dir)
         .opt_level(0)
-        // Hardening and correctness flags from upstream Makefile
-        .flag("-fwrapv")
-        .flag("-fvisibility=hidden")
-        .flag("-fPIE")
-        .flag("-fstack-protector-strong")
-        .flag("--param=ssp-buffer-size=4")
-        .flag("-std=gnu11")
-        // Enable the internal timer (used when CLOCK_REALTIME is unavailable)
-        .define("JENT_CONF_ENABLE_INTERNAL_TIMER", None)
-        // Keep warnings enabled — security-relevant diagnostics from the C
-        // sources (uninitialised variables, signed overflow, UB) should be visible.
-        .warnings(true)
-        .compile("jitterentropy");
+        .warnings(true);
 
+    // Apply CFLAGS parsed from the upstream jitterentropy-library Makefile.
+    // This avoids hard-coding flags and automatically picks up changes
+    // made in future jitterentropy-library releases.
+    let makefile_path = jent_dir.join("Makefile");
+    let cflags = parse_cflags(&makefile_path);
+    for flag in &cflags {
+        build.flag(flag);
+    }
+
+    // Handle the stack-protector conditional from the upstream Makefile.
+    //
+    // The Makefile checks `ENABLE_STACK_PROTECTOR ?= 1` (default: on) and
+    // GCC >= 4.9 for -fstack-protector-strong (else -fstack-protector-all).
+    // GCC 4.9 was released in 2014 — any toolchain building Rust meets that
+    // requirement, so we hard-code the stronger variant here.
+    build.flag("-fstack-protector-strong");
+
+    // JENT_CONF_ENABLE_INTERNAL_TIMER is also in the parsed Makefile flags,
+    // but keeping the explicit .define() call ensures the symbol is present
+    // even if Makefile parsing yields nothing.
+    build.define("JENT_CONF_ENABLE_INTERNAL_TIMER", None);
+
+    build.compile("jitterentropy");
+
+    // Rebuild when sources or Makefile change.
     println!("cargo:rerun-if-changed=jitterentropy-library/src/");
     println!("cargo:rerun-if-changed=jitterentropy-library/jitterentropy.h");
+    println!("cargo:rerun-if-changed=jitterentropy-library/Makefile");
 }
