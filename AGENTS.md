@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI agents when working with code in this repository.
 
 ## Repository Purpose
 
@@ -34,6 +34,27 @@ Each package lives under `utils/<name>/` and follows standard OpenWrt convention
 - `Makefile` — OpenWrt package definition (metadata, build steps, install rules)
 - `files/` — runtime files installed verbatim (init scripts, shell scripts)
 - `src/` — source code copied into `PKG_BUILD_DIR` during `Build/Prepare`
+
+## Versioning — MANDATORY
+
+**Every code change to any package MUST bump `PKG_RELEASE`.** This ensures OpenWrt's build system detects the change and rebuilds/reinstalls the package. No exceptions.
+
+### PKG_RELEASE bump rules
+
+- Bump `PKG_RELEASE` by 1 for every change, no matter how small.
+- When `PKG_VERSION` is changed, reset `PKG_RELEASE` to 1.
+- `PKG_VERSION` changes for significant releases only (feature addition, breaking change).
+
+### Cargo.toml / PKG_VERSION consistency (Rust packages only)
+
+For packages with a `Cargo.toml` (currently `jitterentropy-rustrngd`):
+- `Cargo.toml` `version` field MUST match `PKG_VERSION` in the Makefile.
+- When bumping `PKG_VERSION`, update `Cargo.toml` to the same value.
+- When bumping only `PKG_RELEASE` (patch-level change), `Cargo.toml` version stays unchanged.
+
+### Non-Rust packages
+
+Packages without `Cargo.toml` (currently `filogic-optimizer`) only need `PKG_RELEASE` bumps — no other version file to sync.
 
 ## jitterentropy-rustrngd
 
