@@ -22,7 +22,10 @@ fn parse_cflags(makefile: &Path) -> Vec<String> {
         let trimmed = line.trim();
 
         // Skip conditional blocks — caller handles the known cases explicitly.
-        if trimmed.starts_with("ifeq") || trimmed.starts_with("ifneq") || trimmed.starts_with("ifdef") {
+        if trimmed.starts_with("ifeq")
+            || trimmed.starts_with("ifneq")
+            || trimmed.starts_with("ifdef")
+        {
             in_conditional = true;
             continue;
         }
