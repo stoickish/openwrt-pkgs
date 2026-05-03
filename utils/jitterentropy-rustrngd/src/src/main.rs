@@ -238,6 +238,7 @@ fn main() {
         log_err!("jent_entropy_init failed: {} — aborting", ret);
         std::process::exit(1);
     }
+    log_info!("jent_entropy_init self-test passed");
 
     // Allocate collector in SP800-90B / FIPS-140 compliant mode.
     let ec = unsafe {
