@@ -5,10 +5,63 @@ use std::io;
 use std::thread;
 use std::time::Duration;
 
+use std::sync::Mutex;
+
 use libc::{
-    close, ioctl, open, openlog, syslog, LOG_CONS, LOG_DAEMON, LOG_ERR, LOG_INFO, LOG_PID,
-    LOG_WARNING, O_WRONLY,
+    access, close, ioctl, open, openlog, syslog, F_OK, LOG_CONS, LOG_DAEMON, LOG_ERR, LOG_INFO,
+    LOG_PID, LOG_WARNING, O_WRONLY,
 };
+
+// syslog readiness check — /dev/log is the UNIX socket created by logd.
+// openlog() + LOG_CONS provides a console fallback, but messages are lost
+// until logd starts (START=13).  We buffer them and flush once /dev/log
+// appears so no early-boot messages are dropped.
+fn syslog_ready() -> bool {
+    let path = b"/dev/log\0";
+    unsafe { access(path.as_ptr() as *const libc::c_char, F_OK) == 0 }
+}
+
+// ---------------------------------------------------------------------------
+// Logging — syslog(3) via libc, with early-boot buffer
+// ---------------------------------------------------------------------------
+
+macro_rules! log_err {
+    ($($arg:tt)*) => (log(LOG_ERR, &format!($($arg)*)))
+}
+macro_rules! log_warn {
+    ($($arg:tt)*) => (log(LOG_WARNING, &format!($($arg)*)))
+}
+macro_rules! log_info {
+    ($($arg:tt)*) => (log(LOG_INFO, &format!($($arg)*)))
+}
+
+fn log(level: libc::c_int, msg: &str) {
+    static LOG_BUF: Mutex<Vec<(libc::c_int, String)>> = Mutex::new(Vec::new());
+
+    let cmsg = CString::new(msg).unwrap_or_else(|_| CString::new("").unwrap());
+
+    // If logd is up, drain any buffered messages first, then send this one.
+    if syslog_ready() {
+        let mut guard = LOG_BUF.lock().unwrap();
+        for (lvl, m) in guard.drain(..) {
+            let c = CString::new(m.as_str()).unwrap();
+            unsafe {
+                syslog(lvl, c"%s".as_ptr(), c.as_ptr());
+            }
+        }
+        unsafe {
+            syslog(level, c"%s".as_ptr(), cmsg.as_ptr());
+        }
+        return;
+    }
+
+    // logd not running yet — try syslog anyway (LOG_CONS hits console),
+    // then buffer for replay once /dev/log appears.
+    unsafe {
+        syslog(level, c"%s".as_ptr(), cmsg.as_ptr());
+    }
+    LOG_BUF.lock().unwrap().push((level, msg.to_string()));
+}
 
 // RNDADDENTROPY = _IOW('R', 0x03, int[2])
 // Computed explicitly so the derivation is auditable and a size change is obvious.
@@ -31,27 +84,6 @@ struct RandPoolInfo {
     entropy_count: i32, // credited entropy in bits
     buf_size: i32,      // payload size in bytes
     buf: [u8; ENTROPY_BYTES],
-}
-
-// ---------------------------------------------------------------------------
-// Logging — syslog(3) via libc
-// ---------------------------------------------------------------------------
-
-macro_rules! log_err {
-    ($($arg:tt)*) => (log(LOG_ERR, &format!($($arg)*)))
-}
-macro_rules! log_warn {
-    ($($arg:tt)*) => (log(LOG_WARNING, &format!($($arg)*)))
-}
-macro_rules! log_info {
-    ($($arg:tt)*) => (log(LOG_INFO, &format!($($arg)*)))
-}
-
-fn log(level: libc::c_int, msg: &str) {
-    let cmsg = CString::new(msg).unwrap_or_else(|_| CString::new("").unwrap());
-    unsafe {
-        syslog(level, c"%s".as_ptr(), cmsg.as_ptr());
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +282,17 @@ fn main() {
             }
             std::process::exit(1);
         }
+    }
+
+    // logd starts at START=13 — later than us.  Wait for /dev/log to appear
+    // so buffered early-boot messages get flushed to syslog before the long
+    // sleep.  Timeout 30 s so we never block indefinitely.
+    for _ in 0..60 {
+        if syslog_ready() {
+            log_info!("logd available, flushing early-boot buffer");
+            break;
+        }
+        thread::sleep(Duration::from_millis(500));
     }
 
     // Periodic reseed loop
