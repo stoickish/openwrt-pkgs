@@ -1,6 +1,6 @@
 [package]
 name = "jitterentropy-rustrngd"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "SP800-90B jitter entropy daemon for OpenWrt"
 license = "BSD-3-Clause"

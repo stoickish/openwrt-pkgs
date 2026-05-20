@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=jitterentropy-rustrngd
-PKG_VERSION:=0.1.0
-PKG_RELEASE:=5
+PKG_VERSION:=0.2.0
+PKG_RELEASE:=1
 
 PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
@@ -10,12 +10,12 @@ PKG_MAINTAINER:=https://github.com/stoickish
 # Jitterentropy C library — bundled and statically linked.
 # -O0 is mandatory: optimization eliminates the timing jitter that provides entropy.
 JENT_LIB_NAME:=jitterentropy-library
-JENT_LIB_VERSION:=3.6.3
+JENT_LIB_VERSION:=3.7.0
 JENT_LIB_SOURCE:=$(JENT_LIB_NAME)-$(JENT_LIB_VERSION).tar.gz
 JENT_LIB_SOURCE_URL:=https://github.com/smuellerDD/jitterentropy-library/archive/refs/tags/
 JENT_LIB_URL_FILE:=v$(JENT_LIB_VERSION).tar.gz
 
-JENT_LIB_HASH:=9b3819e275e6473a94c70cfaae7cc2a87a11f60b862e694745daa5d232b0eea3
+JENT_LIB_HASH:=a2add08056cdf983b9d0a2cc5810e0d56da0ca7dcff6a806216741638d63eba9
 
 PKG_BUILD_DEPENDS:=rust/host
 
