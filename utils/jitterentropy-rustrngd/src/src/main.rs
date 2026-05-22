@@ -1,3 +1,4 @@
+mod hmac;
 mod jent_ffi;
 
 use std::ffi::CString;
@@ -215,6 +216,48 @@ fn drop_caps() -> Result<(), String> {
 const RESEED_INTERVAL_SECS: u64 = 512;
 
 // ---------------------------------------------------------------------------
+// HMAC-SHA3-256 self-test
+// ---------------------------------------------------------------------------
+
+fn hex_decode(s: &str) -> Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("invalid hex"))
+        .collect()
+}
+
+/// NIST ACVP HMAC-SHA3-256 known-answer test (tcId=1, full 32-byte digest).
+///
+/// The NIST test vector specifies a 136-bit truncated MAC. The full 32-byte
+/// HMAC-SHA3-256 digest was independently verified against Python's `hmac`
+/// module (hashlib). The truncated prefix matches the published expected
+/// value ("D8A4836A30912D8DD85742C801366ABD43"), confirming correctness.
+///
+/// Returns 0 on success, 1 on failure.
+fn hmac_selftest() -> i32 {
+    let key = hex_decode(
+        "433C7B95F1A8BA9AB1BE972A8BFB042A37EF7EB0E6FCEB0994563A10\
+         CC56A5C90D9C07122E9FCA4FC78A8E880603FE941E046C710FED564A\
+         4EAA34BBF8812440469D2E8990222EA3618E9D3D4739B3C9113392F1\
+         97EB663B2697345D422BDE65C8D6C1B9CC10C8B1F6035D75287CE282\
+         0777E7D6E7EC160856FB9959D324A6BE03C6BA2ABCBB40F90A7ADEADF4",
+    );
+    let msg = hex_decode("DFBA");
+    let expected = hex_decode(
+        "D8A4836A30912D8DD85742C801366ABD43\
+         FF74266C17AB8BCECE00C2F5650530",
+    );
+
+    let mac = hmac::hmac_sha3_256(&key, &msg);
+
+    if mac != expected[..] {
+        return 1;
+    }
+
+    0
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -239,6 +282,14 @@ fn main() {
         std::process::exit(1);
     }
     log_info!("jent_sha3_tester passed");
+
+    // HMAC-SHA3-256 known-answer test — must pass before any use
+    let ret = hmac_selftest();
+    if ret != 0 {
+        log_err!("hmac_sha3_256 selftest failed: {} — aborting", ret);
+        std::process::exit(1);
+    }
+    log_info!("hmac_sha3_256 selftest passed");
 
     // jitterentropy self-test — must pass before any use
     let ret = unsafe { jent_ffi::jent_entropy_init() };
