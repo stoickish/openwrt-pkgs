@@ -15,7 +15,7 @@ JENT_LIB_SOURCE:=$(JENT_LIB_NAME)-$(JENT_LIB_VERSION).tar.gz
 JENT_LIB_SOURCE_URL:=https://github.com/smuellerDD/jitterentropy-library/archive/refs/tags/
 JENT_LIB_URL_FILE:=v$(JENT_LIB_VERSION).tar.gz
 
-JENT_LIB_HASH:=a2add08056cdf983b9d0a2cc5810e0d56da0ca7dcff6a806216741638d63eba9
+JENT_LIB_HASH:=f5eaccc9d2977c83308651be9379f09f34348398f419e8f8b5bbd95928c777ed
 
 PKG_BUILD_DEPENDS:=rust/host
 
