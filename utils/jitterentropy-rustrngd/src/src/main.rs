@@ -1,4 +1,5 @@
 mod hmac;
+mod integrity;
 mod jent_ffi;
 
 use std::ffi::CString;
@@ -216,6 +217,21 @@ fn drop_caps() -> Result<(), String> {
 const RESEED_INTERVAL_SECS: u64 = 512;
 
 // ---------------------------------------------------------------------------
+// Integrity block — embedded at build time, verified at runtime
+// ---------------------------------------------------------------------------
+
+#[used]
+static INTEGRITY_BLOCK: integrity::IntegrityBlock = integrity::IntegrityBlock {
+    tag: integrity::INTEGRITY_TAG,
+    key: [
+        0x9A, 0x2F, 0xD7, 0x14, 0x8B, 0x63, 0xE1, 0x55, 0xC4, 0x0D, 0x7A, 0xB9, 0xFE, 0x32,
+        0x85, 0x41, 0x6E, 0x90, 0xAC, 0xD3, 0x27, 0x5B, 0x68, 0xF1, 0x4F, 0x82, 0xB6, 0xED,
+        0x19, 0x7C, 0x53, 0xA8,
+    ],
+    hmac: [integrity::PLACEHOLDER_BYTE; 32],
+};
+
+// ---------------------------------------------------------------------------
 // HMAC-SHA3-256 self-test
 // ---------------------------------------------------------------------------
 
@@ -290,6 +306,15 @@ fn main() {
         std::process::exit(1);
     }
     log_info!("hmac_sha3_256 selftest passed");
+
+    // Integrity check — verify the binary was properly built and has not been
+    // tampered with.  Computes HMAC-SHA3-256 over the .text section and compares
+    // it against the digest embedded during the post-build patching step.
+    if let Err(e) = integrity::check_integrity(&INTEGRITY_BLOCK) {
+        log_err!("integrity check failed: {} — aborting", e);
+        std::process::exit(1);
+    }
+    log_info!("integrity check passed");
 
     // jitterentropy self-test — must pass before any use
     let ret = unsafe { jent_ffi::jent_entropy_init() };

@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=jitterentropy-rustrngd
 PKG_VERSION:=0.2.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
@@ -64,4 +64,13 @@ define Package/jitterentropy-rustrngd/install
 endef
 
 $(eval $(call RustBinPackage,jitterentropy-rustrngd))
+
+# Post-build: compute HMAC-SHA3-256 integrity digest over the .text section
+# and patch it into the binary's integrity block.  Must run AFTER Build/Compile/Cargo
+# (which produces the binary at PKG_INSTALL_DIR) and BEFORE BuildPackage uses it.
+define Build/Compile
+	+$$(call Build/Compile/Cargo)
+	python3 $(PKG_BUILD_DIR)/scripts/patch-integrity.py $(PKG_INSTALL_DIR)/bin/$(PKG_NAME)
+endef
+
 $(eval $(call BuildPackage,jitterentropy-rustrngd))
