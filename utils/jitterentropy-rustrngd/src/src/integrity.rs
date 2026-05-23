@@ -208,9 +208,7 @@ pub fn check_integrity(block: &IntegrityBlock) -> Result<(), String> {
     let computed = compute_text_hmac(&block.key, &exe_data)?;
 
     if block.hmac != computed {
-        return Err(
-            "integrity check failed: computed HMAC does not match embedded value".into(),
-        );
+        return Err("integrity check failed: computed HMAC does not match embedded value".into());
     }
 
     Ok(())
