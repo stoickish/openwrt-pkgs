@@ -2,8 +2,8 @@
 """Post-build script: patch the integrity HMAC into the jitterentropy-rustrngd binary.
 
 Finds the JENTRNG_INTG_TAG tag in the binary, reads the embedded 32-byte HMAC key,
-computes HMAC-SHA3-256 over all PT_LOAD segments with PF_X (executable),
-and overwrites the 32-byte placeholder with the computed digest.
+computes HMAC-SHA3-256 over all PT_LOAD segments with PF_X (executable) — excluding
+the integrity block itself — and overwrites the 32-byte placeholder with the digest.
 
 Uses program headers (not section headers) so the runtime check works on
 stripped binaries.
@@ -23,6 +23,8 @@ EI_DATA = 5
 
 PT_LOAD = 1
 PF_X = 1
+
+INTEGRITY_BLOCK_SIZE = 16 + 32 + 32
 
 
 def read_u16(data: Union[bytes, bytearray], offset: int, le: bool) -> int:
@@ -60,11 +62,23 @@ class ElfInfo:
             self.phnum = read_u16(data, 44, self.le)
 
 
-def collect_exec_load_segments(data: Union[bytes, bytearray], info: ElfInfo) -> list[tuple[int, int]]:
+def find_tag_offset(data: Union[bytes, bytearray]) -> int:
+    offset = data.find(INTEGRITY_TAG)
+    if offset == -1:
+        raise ValueError(f"integrity tag {INTEGRITY_TAG!r} not found in binary")
+    return offset
+
+
+def collect_hash_ranges(
+    data: Union[bytes, bytearray], info: ElfInfo
+) -> list[tuple[int, int]]:
     if info.phnum == 0 or info.phoff == 0:
         raise ValueError("no program headers")
 
-    segments = []
+    tag_off = find_tag_offset(data)
+    block_end = tag_off + INTEGRITY_BLOCK_SIZE
+
+    ranges = []
 
     for idx in range(info.phnum):
         off = info.phoff + idx * info.phentsize
@@ -92,20 +106,20 @@ def collect_exec_load_segments(data: Union[bytes, bytearray], info: ElfInfo) -> 
         if p_offset + p_filesz > len(data):
             raise ValueError(f"executable load segment {idx} extends beyond file")
 
-        segments.append((p_offset, p_filesz))
+        if block_end <= p_offset or tag_off >= p_offset + p_filesz:
+            ranges.append((p_offset, p_filesz))
+        else:
+            if tag_off > p_offset:
+                ranges.append((p_offset, tag_off - p_offset))
+            if block_end < p_offset + p_filesz:
+                after = p_offset + p_filesz - block_end
+                ranges.append((block_end, after))
 
-    if not segments:
-        raise ValueError("no executable load segments found")
+    if not ranges:
+        raise ValueError("no hashable data in executable load segments")
 
-    segments.sort(key=lambda s: s[0])
-    return segments
-
-
-def find_tag_offset(data: Union[bytes, bytearray]) -> int:
-    offset = data.find(INTEGRITY_TAG)
-    if offset == -1:
-        raise ValueError(f"integrity tag {INTEGRITY_TAG!r} not found in binary")
-    return offset
+    ranges.sort(key=lambda r: r[0])
+    return ranges
 
 
 def main():
@@ -119,7 +133,7 @@ def main():
         data = bytearray(f.read())
 
     info = ElfInfo(data)
-    segments = collect_exec_load_segments(data, info)
+    ranges = collect_hash_ranges(data, info)
 
     tag_off = find_tag_offset(data)
     key_off = tag_off + 16
@@ -135,9 +149,7 @@ def main():
             file=sys.stderr,
         )
 
-    code_data = b"".join(
-        data[offset : offset + size] for offset, size in segments
-    )
+    code_data = b"".join(data[offset : offset + size] for offset, size in ranges)
 
     mac = hmac.new(key, code_data, "sha3_256").digest()
 
@@ -147,9 +159,10 @@ def main():
         f.write(data)
 
     print(f"Patched integrity HMAC in {binary_path}")
-    for offset, size in segments:
-        print(f"  hashed segment  offset=0x{offset:08x}  size={size}")
+    for offset, size in ranges:
+        print(f"  hashed range  offset=0x{offset:08x}  size={size}")
     print(f"  tag at offset 0x{tag_off:08x}")
+    print(f"  block excluded: 0x{tag_off:08x}..0x{tag_off + INTEGRITY_BLOCK_SIZE:08x}")
     print(f"  HMAC: {mac.hex()}")
 
 

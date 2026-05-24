@@ -1,4 +1,5 @@
 use crate::hmac;
+use std::mem;
 
 pub const INTEGRITY_TAG: [u8; 16] = *b"JENTRNG_INTG_TAG";
 pub const PLACEHOLDER_BYTE: u8 = 0xEE;
@@ -96,14 +97,26 @@ fn parse_elf_header(data: &[u8]) -> Result<ElfInfo, String> {
     })
 }
 
-fn collect_exec_load_segments(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
+fn find_tag_offset(data: &[u8]) -> Option<usize> {
+    data.windows(INTEGRITY_TAG.len())
+        .position(|w| w == INTEGRITY_TAG)
+}
+
+fn block_size() -> usize {
+    mem::size_of::<IntegrityBlock>()
+}
+
+fn collect_hash_ranges(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
     let info = parse_elf_header(data)?;
 
     if info.phnum == 0 || info.phoff == 0 {
         return Err("no program headers".into());
     }
 
-    let mut segments = Vec::new();
+    let tag_off = find_tag_offset(data).ok_or("integrity tag not found in binary")?;
+    let block_end = tag_off + block_size();
+
+    let mut ranges = Vec::new();
 
     for idx in 0..info.phnum {
         let off = info.phoff as usize + (idx as usize) * (info.phentsize as usize);
@@ -147,20 +160,30 @@ fn collect_exec_load_segments(data: &[u8]) -> Result<Vec<(usize, usize)>, String
             ));
         }
 
-        segments.push((p_offset, p_filesz));
+        if block_end <= p_offset || tag_off >= p_offset + p_filesz {
+            ranges.push((p_offset, p_filesz));
+        } else {
+            if tag_off > p_offset {
+                ranges.push((p_offset, tag_off - p_offset));
+            }
+            if block_end < p_offset + p_filesz {
+                let after = p_offset + p_filesz - block_end;
+                ranges.push((block_end, after));
+            }
+        }
     }
 
-    if segments.is_empty() {
-        return Err("no executable load segments found".into());
+    if ranges.is_empty() {
+        return Err("no hashable data in executable load segments".into());
     }
 
-    segments.sort_by_key(|&(off, _)| off);
-    Ok(segments)
+    ranges.sort_by_key(|&(off, _)| off);
+    Ok(ranges)
 }
 
 fn compute_text_hmac(key: &[u8], data: &[u8]) -> Result<[u8; 32], String> {
-    let segments = collect_exec_load_segments(data)?;
-    let code_data: Vec<u8> = segments
+    let ranges = collect_hash_ranges(data)?;
+    let code_data: Vec<u8> = ranges
         .iter()
         .flat_map(|&(off, size)| data[off..off + size].iter().copied())
         .collect();
