@@ -2,16 +2,17 @@
 """Post-build script: patch the integrity HMAC into the jitterentropy-rustrngd binary.
 
 Finds the JENTRNG_INTG_TAG tag in the binary, reads the embedded 32-byte HMAC key,
-computes HMAC-SHA3-256 over all executable (.text) code regions, and overwrites the
-32-byte placeholder with the computed digest.
+computes HMAC-SHA3-256 over all PT_LOAD segments with PF_X (executable),
+and overwrites the 32-byte placeholder with the computed digest.
 
-Usage:
-    python3 patch-integrity.py <binary_path>
+Uses program headers (not section headers) so the runtime check works on
+stripped binaries.
 """
 
 import hmac
 import struct
 import sys
+from typing import Union
 
 INTEGRITY_TAG = b"JENTRNG_INTG_TAG"
 PLACEHOLDER_BYTE = 0xEE
@@ -20,26 +21,27 @@ EI_MAGIC = b"\x7fELF"
 EI_CLASS = 4
 EI_DATA = 5
 
-SHF_EXECINSTR = 0x4
+PT_LOAD = 1
+PF_X = 1
 
 
-def read_u16(data: bytes, offset: int, le: bool) -> int:
+def read_u16(data: Union[bytes, bytearray], offset: int, le: bool) -> int:
     fmt = "<H" if le else ">H"
     return struct.unpack_from(fmt, data, offset)[0]
 
 
-def read_u32(data: bytes, offset: int, le: bool) -> int:
+def read_u32(data: Union[bytes, bytearray], offset: int, le: bool) -> int:
     fmt = "<I" if le else ">I"
     return struct.unpack_from(fmt, data, offset)[0]
 
 
-def read_u64(data: bytes, offset: int, le: bool) -> int:
+def read_u64(data: Union[bytes, bytearray], offset: int, le: bool) -> int:
     fmt = "<Q" if le else ">Q"
     return struct.unpack_from(fmt, data, offset)[0]
 
 
 class ElfInfo:
-    def __init__(self, data: bytes):
+    def __init__(self, data: Union[bytes, bytearray]):
         if len(data) < 64:
             raise ValueError("ELF file too small")
         if data[:4] != EI_MAGIC:
@@ -49,77 +51,60 @@ class ElfInfo:
         self.le = data[EI_DATA] == 1
 
         if self.is_64:
-            self.shoff = read_u64(data, 40, self.le)
-            self.shentsize = read_u16(data, 58, self.le)
-            self.shnum = read_u16(data, 60, self.le)
-            self.shstrndx = read_u16(data, 62, self.le)
+            self.phoff = read_u64(data, 32, self.le)
+            self.phentsize = read_u16(data, 54, self.le)
+            self.phnum = read_u16(data, 56, self.le)
         else:
-            self.shoff = read_u32(data, 32, self.le)
-            self.shentsize = read_u16(data, 46, self.le)
-            self.shnum = read_u16(data, 48, self.le)
-            self.shstrndx = read_u16(data, 50, self.le)
+            self.phoff = read_u32(data, 28, self.le)
+            self.phentsize = read_u16(data, 42, self.le)
+            self.phnum = read_u16(data, 44, self.le)
 
 
-class SectionInfo:
-    def __init__(self, info: ElfInfo, data: bytes, idx: int):
-        off = info.shoff + idx * info.shentsize
+def collect_exec_load_segments(data: Union[bytes, bytearray], info: ElfInfo) -> list[tuple[int, int]]:
+    if info.phnum == 0 or info.phoff == 0:
+        raise ValueError("no program headers")
+
+    segments = []
+
+    for idx in range(info.phnum):
+        off = info.phoff + idx * info.phentsize
+        if off + info.phentsize > len(data):
+            raise ValueError(f"program header entry {idx} extends beyond file")
+
+        p_type = read_u32(data, off, info.le)
+        if p_type != PT_LOAD:
+            continue
 
         if info.is_64:
-            self.name_off = read_u32(data, off, info.le)
-            self.flags = read_u64(data, off + 8, info.le)
-            self.offset = read_u64(data, off + 24, info.le)
-            self.size = read_u64(data, off + 32, info.le)
+            p_flags = read_u32(data, off + 4, info.le)
+            p_offset = read_u64(data, off + 8, info.le)
+            p_filesz = read_u64(data, off + 32, info.le)
         else:
-            self.name_off = read_u32(data, off, info.le)
-            self.flags = read_u32(data, off + 8, info.le)
-            self.offset = read_u32(data, off + 16, info.le)
-            self.size = read_u32(data, off + 20, info.le)
+            p_flags = read_u32(data, off + 24, info.le)
+            p_offset = read_u32(data, off + 4, info.le)
+            p_filesz = read_u32(data, off + 16, info.le)
 
-
-def shstr_lookup(data: bytes, shstrtab: SectionInfo, off: int) -> bytes | None:
-    start = shstrtab.offset + off
-    if start >= len(data):
-        return None
-    try:
-        end = data.index(0, start)
-    except ValueError:
-        end = len(data)
-    return data[start:end]
-
-
-def find_executable_sections(data: bytes, info: ElfInfo) -> list[tuple[int, int, bytes]]:
-    if info.shstrndx >= info.shnum:
-        raise ValueError("invalid shstrndx")
-
-    shstrtab = SectionInfo(info, data, info.shstrndx)
-    sections = []
-
-    for idx in range(info.shnum):
-        if idx == info.shstrndx:
+        if not (p_flags & PF_X):
             continue
-        sec = SectionInfo(info, data, idx)
-        if not (sec.flags & SHF_EXECINSTR):
-            continue
-        name = shstr_lookup(data, shstrtab, sec.name_off)
-        if name is None:
-            continue
-        # Exclude PLT sections — the trampolines may change at load time
-        # due to lazy binding resolution.  .text, .init, .fini are stable.
-        if name.startswith(b".plt"):
-            continue
-        if sec.offset + sec.size > len(data):
-            raise ValueError(f"section {name!r} extends beyond file")
-        sections.append((sec.offset, sec.size, name))
 
-    return sections
+        if p_filesz == 0:
+            continue
+        if p_offset + p_filesz > len(data):
+            raise ValueError(f"executable load segment {idx} extends beyond file")
+
+        segments.append((p_offset, p_filesz))
+
+    if not segments:
+        raise ValueError("no executable load segments found")
+
+    segments.sort(key=lambda s: s[0])
+    return segments
 
 
-def find_tag_offset(data: bytes) -> int:
+def find_tag_offset(data: Union[bytes, bytearray]) -> int:
     offset = data.find(INTEGRITY_TAG)
     if offset == -1:
-        raise ValueError(
-            f"integrity tag {INTEGRITY_TAG!r} not found in binary"
-        )
+        raise ValueError(f"integrity tag {INTEGRITY_TAG!r} not found in binary")
     return offset
 
 
@@ -134,11 +119,7 @@ def main():
         data = bytearray(f.read())
 
     info = ElfInfo(data)
-    sections = find_executable_sections(data, info)
-
-    if not sections:
-        print("ERROR: no executable sections found", file=sys.stderr)
-        sys.exit(1)
+    segments = collect_exec_load_segments(data, info)
 
     tag_off = find_tag_offset(data)
     key_off = tag_off + 16
@@ -154,9 +135,8 @@ def main():
             file=sys.stderr,
         )
 
-    sections.sort(key=lambda s: s[0])
     code_data = b"".join(
-        data[offset : offset + size] for offset, size, _name in sections
+        data[offset : offset + size] for offset, size in segments
     )
 
     mac = hmac.new(key, code_data, "sha3_256").digest()
@@ -167,8 +147,8 @@ def main():
         f.write(data)
 
     print(f"Patched integrity HMAC in {binary_path}")
-    for offset, size, name in sections:
-        print(f"  hashed {name.decode('ascii', errors='replace'):12s}  offset=0x{offset:08x}  size={size}")
+    for offset, size in segments:
+        print(f"  hashed segment  offset=0x{offset:08x}  size={size}")
     print(f"  tag at offset 0x{tag_off:08x}")
     print(f"  HMAC: {mac.hex()}")
 

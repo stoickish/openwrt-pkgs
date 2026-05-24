@@ -13,7 +13,9 @@ pub struct IntegrityBlock {
 const EI_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const EI_CLASS: usize = 4;
 const EI_DATA: usize = 5;
-const SHF_EXECINSTR: u32 = 0x4;
+
+const PT_LOAD: u32 = 1;
+const PF_X: u32 = 1;
 
 fn read_u16(data: &[u8], offset: usize, le: bool) -> u16 {
     let b = [data[offset], data[offset + 1]];
@@ -57,10 +59,9 @@ fn read_u64(data: &[u8], offset: usize, le: bool) -> u64 {
 }
 
 struct ElfInfo {
-    shoff: u64,
-    shentsize: u16,
-    shnum: u16,
-    shstrndx: u16,
+    phoff: u64,
+    phentsize: u16,
+    phnum: u16,
     is_64: bool,
     le: bool,
 }
@@ -76,120 +77,90 @@ fn parse_elf_header(data: &[u8]) -> Result<ElfInfo, String> {
     let is_64 = data[EI_CLASS] == 2;
     let le = data[EI_DATA] == 1;
 
-    let (shoff, shentsize_off, shnum_off, shstrndx_off) = if is_64 {
-        (40, 58, 60, 62)
-    } else {
-        (32, 46, 48, 50)
-    };
+    let (phoff_off, phentsize_off, phnum_off) = if is_64 { (32, 54, 56) } else { (28, 42, 44) };
 
-    let shoff = if is_64 {
-        read_u64(data, shoff, le)
+    let phoff = if is_64 {
+        read_u64(data, phoff_off, le)
     } else {
-        read_u32(data, shoff, le) as u64
+        read_u32(data, phoff_off, le) as u64
     };
-    let shentsize = read_u16(data, shentsize_off, le);
-    let shnum = read_u16(data, shnum_off, le);
-    let shstrndx = read_u16(data, shstrndx_off, le);
+    let phentsize = read_u16(data, phentsize_off, le);
+    let phnum = read_u16(data, phnum_off, le);
 
     Ok(ElfInfo {
-        shoff,
-        shentsize,
-        shnum,
-        shstrndx,
+        phoff,
+        phentsize,
+        phnum,
         is_64,
         le,
     })
 }
 
-fn read_sect_hdr(info: &ElfInfo, data: &[u8], idx: u16) -> Result<SectionInfo, String> {
-    let off = info.shoff as usize + (idx as usize) * (info.shentsize as usize);
-    if off + info.shentsize as usize > data.len() {
-        return Err("section header table entry extends beyond file".into());
-    }
-
-    if info.is_64 {
-        Ok(SectionInfo {
-            name_off: read_u32(data, off, info.le),
-            flags: read_u64(data, off + 8, info.le),
-            offset: read_u64(data, off + 24, info.le),
-            size: read_u64(data, off + 32, info.le),
-        })
-    } else {
-        Ok(SectionInfo {
-            name_off: read_u32(data, off, info.le),
-            flags: read_u32(data, off + 8, info.le) as u64,
-            offset: read_u32(data, off + 16, info.le) as u64,
-            size: read_u32(data, off + 20, info.le) as u64,
-        })
-    }
-}
-
-struct SectionInfo {
-    name_off: u32,
-    flags: u64,
-    offset: u64,
-    size: u64,
-}
-
-/// Look up a null-terminated string in the section header string table.
-fn shstr_lookup<'a>(data: &'a [u8], shstrtab: &SectionInfo, off: u32) -> Option<&'a [u8]> {
-    let base = shstrtab.offset as usize;
-    let start = base + off as usize;
-    if start >= data.len() {
-        return None;
-    }
-    let end = data[start..]
-        .iter()
-        .position(|&b| b == 0)
-        .map(|p| start + p)
-        .unwrap_or(data.len());
-    Some(&data[start..end])
-}
-
-fn collect_exec_sections(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
+fn collect_exec_load_segments(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
     let info = parse_elf_header(data)?;
 
-    if info.shstrndx >= info.shnum {
-        return Err("invalid shstrndx".into());
+    if info.phnum == 0 || info.phoff == 0 {
+        return Err("no program headers".into());
     }
-    let shstrtab = read_sect_hdr(&info, data, info.shstrndx)?;
 
-    let mut sections = Vec::new();
+    let mut segments = Vec::new();
 
-    for idx in 0..info.shnum {
-        if idx == info.shstrndx {
+    for idx in 0..info.phnum {
+        let off = info.phoff as usize + (idx as usize) * (info.phentsize as usize);
+        if off + info.phentsize as usize > data.len() {
+            return Err(format!("program header entry {} extends beyond file", idx));
+        }
+
+        let p_type = read_u32(data, off, info.le);
+        if p_type != PT_LOAD {
             continue;
         }
-        let sec = read_sect_hdr(&info, data, idx)?;
-        if sec.flags & SHF_EXECINSTR as u64 == 0 {
-            continue;
-        }
-        let name = match shstr_lookup(data, &shstrtab, sec.name_off) {
-            Some(n) => n,
-            None => continue,
+
+        let p_flags: u32 = if info.is_64 {
+            read_u32(data, off + 4, info.le)
+        } else {
+            read_u32(data, off + 24, info.le)
         };
-        if name.starts_with(b".plt") {
+        if p_flags & PF_X == 0 {
             continue;
         }
-        let offset = sec.offset as usize;
-        let size = sec.size as usize;
-        if offset + size > data.len() {
-            return Err("section extends beyond file".into());
+
+        let (p_offset, p_filesz) = if info.is_64 {
+            (
+                read_u64(data, off + 8, info.le) as usize,
+                read_u64(data, off + 32, info.le) as usize,
+            )
+        } else {
+            (
+                read_u32(data, off + 4, info.le) as usize,
+                read_u32(data, off + 16, info.le) as usize,
+            )
+        };
+
+        if p_filesz == 0 {
+            continue;
         }
-        sections.push((offset, size));
+        if p_offset + p_filesz > data.len() {
+            return Err(format!(
+                "executable load segment {} extends beyond file",
+                idx
+            ));
+        }
+
+        segments.push((p_offset, p_filesz));
     }
 
-    if sections.is_empty() {
-        return Err("no executable sections found".into());
+    if segments.is_empty() {
+        return Err("no executable load segments found".into());
     }
 
-    sections.sort_by_key(|&(off, _)| off);
-    Ok(sections)
+    segments.sort_by_key(|&(off, _)| off);
+    Ok(segments)
 }
 
 fn compute_text_hmac(key: &[u8], data: &[u8]) -> Result<[u8; 32], String> {
-    let sections = collect_exec_sections(data)?;
-    let code_data: Vec<u8> = sections
+    let segments = collect_exec_load_segments(data)?;
+    let code_data: Vec<u8> = segments
         .iter()
         .flat_map(|&(off, size)| data[off..off + size].iter().copied())
         .collect();
