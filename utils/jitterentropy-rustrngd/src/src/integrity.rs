@@ -181,29 +181,53 @@ fn collect_hash_ranges(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
     Ok(ranges)
 }
 
-fn compute_text_hmac(key: &[u8], data: &[u8]) -> Result<[u8; 32], String> {
-    let ranges = collect_hash_ranges(data)?;
-    let code_data: Vec<u8> = ranges
+fn hex_fmt(bytes: &[u8]) -> String {
+    bytes
         .iter()
-        .flat_map(|&(off, size)| data[off..off + size].iter().copied())
-        .collect();
-    Ok(hmac::hmac_sha3_256(key, &code_data))
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn err_msg(msg: &str) -> String {
+    msg.into()
 }
 
 pub fn check_integrity(block: &IntegrityBlock) -> Result<(), String> {
     let placeholder: [u8; 32] = [PLACEHOLDER_BYTE; 32];
     if block.hmac == placeholder {
-        return Err("integrity placeholder not patched — build incomplete".into());
+        return Err(err_msg(
+            "integrity placeholder not patched — build incomplete",
+        ));
     }
 
     let exe_data = std::fs::read("/proc/self/exe")
         .map_err(|e| format!("cannot read /proc/self/exe: {}", e))?;
 
-    let computed = compute_text_hmac(&block.key, &exe_data)?;
+    let ranges = collect_hash_ranges(&exe_data)?;
+    let code_data: Vec<u8> = ranges
+        .iter()
+        .flat_map(|&(off, size)| exe_data[off..off + size].iter().copied())
+        .collect();
+    let computed = hmac::hmac_sha3_256(&block.key, &code_data);
 
-    if block.hmac != computed {
-        return Err("integrity check failed: computed HMAC does not match embedded value".into());
+    if block.hmac == computed {
+        return Ok(());
     }
 
-    Ok(())
+    let mut msg = format!(
+        "computed HMAC does not match embedded value (key={}, embedded={}, computed={}, total_bytes={}, ranges=[",
+        hex_fmt(&block.key),
+        hex_fmt(&block.hmac),
+        hex_fmt(&computed),
+        code_data.len(),
+    );
+    for (i, &(off, size)) in ranges.iter().enumerate() {
+        if i > 0 {
+            msg.push_str(", ");
+        }
+        msg.push_str(&format!("0x{:x}+0x{:x}", off, size));
+    }
+    msg.push(']');
+    Err(msg)
 }
