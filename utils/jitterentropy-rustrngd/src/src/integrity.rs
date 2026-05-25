@@ -1,5 +1,6 @@
 use crate::hmac;
 use std::mem;
+use zeroize::Zeroize;
 
 pub const INTEGRITY_TAG: [u8; 16] = *b"JENTRNG_INTG_TAG";
 pub const PLACEHOLDER_BYTE: u8 = 0xEE;
@@ -209,14 +210,6 @@ fn collect_hash_ranges(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
     Ok(ranges)
 }
 
-fn hex_fmt(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<Vec<_>>()
-        .join("")
-}
-
 fn err_msg(msg: &str) -> String {
     msg.into()
 }
@@ -237,17 +230,17 @@ pub fn check_integrity(block: &IntegrityBlock) -> Result<(), String> {
         .iter()
         .flat_map(|&(off, size)| exe_data[off..off + size].iter().copied())
         .collect();
-    let computed = hmac::hmac_sha3_256(&block.key, &code_data);
+    let mut computed = hmac::hmac_sha3_256(&block.key, &code_data);
 
     if block.hmac == computed {
+        computed.zeroize();
         return Ok(());
     }
 
+    computed.zeroize();
+
     let mut msg = format!(
-        "computed HMAC does not match embedded value (key={}, embedded={}, computed={}, total_bytes={}, ranges=[",
-        hex_fmt(&block.key),
-        hex_fmt(&block.hmac),
-        hex_fmt(&computed),
+        "computed HMAC does not match embedded value (total_bytes={}, ranges=[",
         code_data.len(),
     );
     for (i, &(off, size)) in ranges.iter().enumerate() {

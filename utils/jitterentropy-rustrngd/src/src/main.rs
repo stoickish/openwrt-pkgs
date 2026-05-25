@@ -13,6 +13,7 @@ use libc::{
     access, close, ioctl, open, openlog, syslog, F_OK, LOG_CONS, LOG_DAEMON, LOG_ERR, LOG_INFO,
     LOG_PID, LOG_WARNING, O_WRONLY,
 };
+use zeroize::Zeroize;
 
 // syslog readiness check — /dev/log is the UNIX socket created by logd.
 // openlog() + LOG_CONS provides a console fallback, but messages are lost
@@ -111,13 +112,14 @@ unsafe fn inject_entropy(ec: *mut jent_ffi::RandData, fd: i32) -> Result<(), Str
 
     // Credit only what was actually written — ret may be less than ENTROPY_BYTES.
     let actual = ret as usize;
-    let rpi = RandPoolInfo {
+    let mut rpi = RandPoolInfo {
         entropy_count: (actual * 8) as i32,
         buf_size: actual as i32,
         buf,
     };
 
     let ret = ioctl(fd, RNDADDENTROPY as _, &rpi as *const RandPoolInfo);
+    rpi.buf.zeroize();
     if ret < 0 {
         return Err(format!(
             "RNDADDENTROPY ioctl failed: {}",

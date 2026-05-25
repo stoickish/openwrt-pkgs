@@ -3,6 +3,7 @@
 //! Only the symbols required by this daemon are declared.
 
 use libc::{c_char, c_int, c_uint, size_t, ssize_t};
+use zeroize::Zeroize;
 
 /// Minimum oversampling rate when JENT_CONF_DISABLE_LOOP_SHUFFLE is set (the
 /// library default). Mirrors the C header define of the same name.
@@ -33,6 +34,7 @@ pub struct RandData {
 /// `jent_sha3_final`. Layout is C-compatible (`#[repr(C)]`) so Rust and C
 /// agree on field offsets and alignment for the target ABI.
 #[repr(C)]
+#[derive(Zeroize)]
 pub struct Sha3Ctx {
     pub state: [u64; 25],
     pub partial: [u8; JENT_SHA3_256_SIZE_BLOCK],

@@ -1,4 +1,5 @@
 use crate::jent_ffi;
+use zeroize::Zeroize;
 
 const IPAD: u8 = 0x36;
 const OPAD: u8 = 0x5C;
@@ -20,6 +21,7 @@ fn sha3_256(data: &[u8]) -> [u8; jent_ffi::JENT_SHA3_256_SIZE_DIGEST] {
         jent_ffi::jent_sha3_update(&mut ctx, data.as_ptr(), data.len());
         jent_ffi::jent_sha3_final(&mut ctx, digest.as_mut_ptr());
     }
+    ctx.zeroize();
     digest
 }
 
@@ -49,5 +51,11 @@ pub fn hmac_sha3_256(key: &[u8], msg: &[u8]) -> [u8; jent_ffi::JENT_SHA3_256_SIZ
 
     let inner = sha3_256(&[&i_key_pad[..], msg].concat());
 
-    sha3_256(&[&o_key_pad[..], &inner[..]].concat())
+    let mac = sha3_256(&[&o_key_pad[..], &inner[..]].concat());
+
+    k0.zeroize();
+    i_key_pad.zeroize();
+    o_key_pad.zeroize();
+
+    mac
 }

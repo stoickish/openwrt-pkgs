@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=jitterentropy-rustrngd
 PKG_VERSION:=0.2.0
-PKG_RELEASE:=12
+PKG_RELEASE:=14
 
 PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
