@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=jitterentropy-rustrngd
 PKG_VERSION:=0.2.0
-PKG_RELEASE:=11
+PKG_RELEASE:=12
 
 PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
@@ -68,9 +68,9 @@ $(eval $(call RustBinPackage,jitterentropy-rustrngd))
 # Post-build: compute HMAC-SHA3-256 integrity digest over the .text section
 # and patch it into the binary's integrity block.  Must run AFTER Build/Compile/Cargo
 # (which produces the binary at PKG_INSTALL_DIR) and BEFORE BuildPackage uses it.
-export JENT_RNGRD_VERSION=$(PKG_VERSION)
-export JENT_RNGRD_RELEASE=$(PKG_RELEASE)
-export JENT_LIB_VERSION=$(JENT_LIB_VERSION)
+JENT_RNGRD_VERSION:=$(PKG_VERSION)
+JENT_RNGRD_RELEASE:=$(PKG_RELEASE)
+export JENT_RNGRD_VERSION JENT_RNGRD_RELEASE JENT_LIB_VERSION
 
 define Build/Compile
 	+$$(call Build/Compile/Cargo)
