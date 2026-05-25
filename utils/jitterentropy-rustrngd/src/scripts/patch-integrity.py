@@ -3,10 +3,12 @@
 
 Finds the JENTRNG_INTG_TAG tag in the binary, reads the embedded 32-byte HMAC key,
 computes HMAC-SHA3-256 over all PT_LOAD segments with PF_X (executable) — excluding
-the integrity block itself — and overwrites the 32-byte placeholder with the digest.
+the ELF header and the integrity block itself — and overwrites the 32-byte placeholder
+with the computed digest.
 
 Uses program headers (not section headers) so the runtime check works on
-stripped binaries.
+stripped binaries.  Excludes the ELF header because APK packaging may zero
+out section-header pointer fields that live inside the first LOAD segment.
 """
 
 import hmac
@@ -56,10 +58,12 @@ class ElfInfo:
             self.phoff = read_u64(data, 32, self.le)
             self.phentsize = read_u16(data, 54, self.le)
             self.phnum = read_u16(data, 56, self.le)
+            self.ehsize = read_u16(data, 52, self.le)
         else:
             self.phoff = read_u32(data, 28, self.le)
             self.phentsize = read_u16(data, 42, self.le)
             self.phnum = read_u16(data, 44, self.le)
+            self.ehsize = read_u16(data, 40, self.le)
 
 
 def find_tag_offset(data: Union[bytes, bytearray]) -> int:
@@ -77,6 +81,7 @@ def collect_hash_ranges(
 
     tag_off = find_tag_offset(data)
     block_end = tag_off + INTEGRITY_BLOCK_SIZE
+    ehsize = info.ehsize
 
     ranges = []
 
@@ -106,14 +111,26 @@ def collect_hash_ranges(
         if p_offset + p_filesz > len(data):
             raise ValueError(f"executable load segment {idx} extends beyond file")
 
-        if block_end <= p_offset or tag_off >= p_offset + p_filesz:
-            ranges.append((p_offset, p_filesz))
-        else:
-            if tag_off > p_offset:
-                ranges.append((p_offset, tag_off - p_offset))
-            if block_end < p_offset + p_filesz:
-                after = p_offset + p_filesz - block_end
-                ranges.append((block_end, after))
+        seg_start = p_offset
+        seg_end = p_offset + p_filesz
+
+        cuts = []
+
+        if block_end > seg_start and tag_off < seg_end:
+            cuts.append((max(tag_off, seg_start), min(block_end, seg_end)))
+
+        if ehsize > seg_start and 0 < seg_end:
+            cuts.append((max(0, seg_start), min(ehsize, seg_end)))
+
+        cuts.sort()
+
+        pos = seg_start
+        for c_start, c_end in cuts:
+            if c_start > pos:
+                ranges.append((pos, c_start - pos))
+            pos = max(pos, c_end)
+        if pos < seg_end:
+            ranges.append((pos, seg_end - pos))
 
     if not ranges:
         raise ValueError("no hashable data in executable load segments")
@@ -159,6 +176,7 @@ def main():
         f.write(data)
 
     print(f"Patched integrity HMAC in {binary_path}")
+    print(f"  ehsize={info.ehsize}  phnum={info.phnum}")
     for offset, size in ranges:
         print(f"  hashed range  offset=0x{offset:08x}  size={size}")
     print(f"  tag at offset 0x{tag_off:08x}")

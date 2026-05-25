@@ -63,6 +63,7 @@ struct ElfInfo {
     phoff: u64,
     phentsize: u16,
     phnum: u16,
+    ehsize: u16,
     is_64: bool,
     le: bool,
 }
@@ -78,7 +79,11 @@ fn parse_elf_header(data: &[u8]) -> Result<ElfInfo, String> {
     let is_64 = data[EI_CLASS] == 2;
     let le = data[EI_DATA] == 1;
 
-    let (phoff_off, phentsize_off, phnum_off) = if is_64 { (32, 54, 56) } else { (28, 42, 44) };
+    let (phoff_off, phentsize_off, phnum_off, ehsize_off) = if is_64 {
+        (32, 54, 56, 52)
+    } else {
+        (28, 42, 44, 40)
+    };
 
     let phoff = if is_64 {
         read_u64(data, phoff_off, le)
@@ -87,11 +92,13 @@ fn parse_elf_header(data: &[u8]) -> Result<ElfInfo, String> {
     };
     let phentsize = read_u16(data, phentsize_off, le);
     let phnum = read_u16(data, phnum_off, le);
+    let ehsize = read_u16(data, ehsize_off, le);
 
     Ok(ElfInfo {
         phoff,
         phentsize,
         phnum,
+        ehsize,
         is_64,
         le,
     })
@@ -115,6 +122,7 @@ fn collect_hash_ranges(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
 
     let tag_off = find_tag_offset(data).ok_or("integrity tag not found in binary")?;
     let block_end = tag_off + block_size();
+    let ehsize = info.ehsize as usize;
 
     let mut ranges = Vec::new();
 
@@ -160,16 +168,30 @@ fn collect_hash_ranges(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
             ));
         }
 
-        if block_end <= p_offset || tag_off >= p_offset + p_filesz {
-            ranges.push((p_offset, p_filesz));
-        } else {
-            if tag_off > p_offset {
-                ranges.push((p_offset, tag_off - p_offset));
+        let seg_start = p_offset;
+        let seg_end = p_offset + p_filesz;
+
+        let mut cuts: Vec<(usize, usize)> = Vec::new();
+
+        if block_end > seg_start && tag_off < seg_end {
+            cuts.push((tag_off.max(seg_start), block_end.min(seg_end)));
+        }
+
+        if ehsize > seg_start && 0 < seg_end {
+            cuts.push((0usize.max(seg_start), ehsize.min(seg_end)));
+        }
+
+        cuts.sort();
+
+        let mut pos = seg_start;
+        for (c_start, c_end) in cuts {
+            if c_start > pos {
+                ranges.push((pos, c_start - pos));
             }
-            if block_end < p_offset + p_filesz {
-                let after = p_offset + p_filesz - block_end;
-                ranges.push((block_end, after));
-            }
+            pos = pos.max(c_end);
+        }
+        if pos < seg_end {
+            ranges.push((pos, seg_end - pos));
         }
     }
 
