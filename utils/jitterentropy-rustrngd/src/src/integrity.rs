@@ -123,6 +123,7 @@ fn collect_hash_ranges(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
     let tag_off = find_tag_offset(data).ok_or("integrity tag not found in binary")?;
     let block_end = tag_off + block_size();
     let ehsize = info.ehsize as usize;
+    let phdr_end = info.phoff as usize + (info.phnum as usize) * (info.phentsize as usize);
 
     let mut ranges = Vec::new();
 
@@ -179,6 +180,11 @@ fn collect_hash_ranges(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
 
         if ehsize > seg_start && 0 < seg_end {
             cuts.push((0usize.max(seg_start), ehsize.min(seg_end)));
+        }
+
+        let phdr_off = info.phoff as usize;
+        if phdr_end > seg_start && phdr_off < seg_end {
+            cuts.push((phdr_off.max(seg_start), phdr_end.min(seg_end)));
         }
 
         cuts.sort();

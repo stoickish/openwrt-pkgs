@@ -82,6 +82,7 @@ def collect_hash_ranges(
     tag_off = find_tag_offset(data)
     block_end = tag_off + INTEGRITY_BLOCK_SIZE
     ehsize = info.ehsize
+    phdr_end = info.phoff + info.phnum * info.phentsize
 
     ranges = []
 
@@ -121,6 +122,10 @@ def collect_hash_ranges(
 
         if ehsize > seg_start and 0 < seg_end:
             cuts.append((max(0, seg_start), min(ehsize, seg_end)))
+
+        phdr_off = info.phoff
+        if phdr_end > seg_start and phdr_off < seg_end:
+            cuts.append((max(phdr_off, seg_start), min(phdr_end, seg_end)))
 
         cuts.sort()
 
