@@ -179,7 +179,7 @@ fn collect_hash_ranges(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
         }
 
         if ehsize > seg_start && 0 < seg_end {
-            cuts.push((0usize.max(seg_start), ehsize.min(seg_end)));
+            cuts.push((seg_start, ehsize.min(seg_end)));
         }
 
         let phdr_off = info.phoff as usize;
