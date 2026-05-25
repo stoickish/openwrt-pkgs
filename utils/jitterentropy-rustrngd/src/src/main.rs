@@ -286,8 +286,15 @@ fn main() {
         openlog(ident.as_ptr(), LOG_CONS | LOG_PID, LOG_DAEMON);
     }
 
+    const VERSION: &str = env!("JENT_RNGRD_VERSION");
+    const RELEASE: &str = env!("JENT_RNGRD_RELEASE");
+    const JENT_LIB_VER: &str = env!("JENT_LIB_VERSION");
+
     log_info!(
-        "jitterentropy-rustrngd starting, reseed interval {}s",
+        "jitterentropy-rustrngd v{}-{} starting (libjitterentropy v{}), reseed interval {}s",
+        VERSION,
+        RELEASE,
+        JENT_LIB_VER,
         RESEED_INTERVAL_SECS
     );
 

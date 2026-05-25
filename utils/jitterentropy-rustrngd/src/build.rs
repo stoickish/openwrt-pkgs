@@ -71,6 +71,16 @@ fn parse_cflags(makefile: &Path) -> Vec<String> {
 }
 
 fn main() {
+    for var in &[
+        "JENT_RNGRD_VERSION",
+        "JENT_RNGRD_RELEASE",
+        "JENT_LIB_VERSION",
+    ] {
+        let value = env::var(var).unwrap_or_else(|_| "unknown".to_string());
+        println!("cargo:rustc-env={}={}", var, value);
+        println!("cargo:rerun-if-env-changed={}", var);
+    }
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let jent_dir = manifest_dir.join("jitterentropy-library");
 
