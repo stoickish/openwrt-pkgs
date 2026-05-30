@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=filogic-optimizer
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=2
+PKG_RELEASE:=7
 PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
 
@@ -21,6 +21,7 @@ define Package/filogic-optimizer/description
 
   - PCIe ASPM powersave (all platforms)
   - Aggressive fan trip-point profile (SDG-8733 only, detected at runtime)
+  - TCP BBR congestion control (auto-detected if kmod-tcp-bbr is installed)
   - WED hardware flow offload via nftables FLOWOFFLOAD (all platforms),
     applied via hotplug when the lan interface comes up — no polling
 endef

@@ -28,4 +28,19 @@ if grep -qaE "sdg-873[34]" /proc/device-tree/compatible 2>/dev/null; then
 	echo 75000 > "$THERMAL_BASE/trip_point_0_temp"
 fi
 
+# ── BBR qdisc pairing ─────────────────────────────────────────────────────
+# BBR pairs best with fq (Fair Queue) for pacing; fq_codel's packet drops
+# can interfere with BBR's bandwidth estimation. kmod-tcp-bbr already enables
+# BBR via its own sysctl conf — we just set the optimal qdisc.
+# Write sysctl.conf so fq applies at START=11 (before network at START=20),
+# ensuring all interfaces get fq from creation.
+BBR_FQ_CONF=/etc/sysctl.d/13-filogic-bbr-fq.conf
+if [ "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)" = "bbr" ]; then
+	echo "net.core.default_qdisc=fq" > "$BBR_FQ_CONF"
+	echo fq > /proc/sys/net/core/default_qdisc
+	log "TCP BBR detected: default qdisc set to fq"
+else
+	rm -f "$BBR_FQ_CONF"
+fi
+
 exit 0
