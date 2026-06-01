@@ -37,8 +37,11 @@ fi
 BBR_FQ_CONF=/etc/sysctl.d/13-filogic-bbr-fq.conf
 if [ "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)" = "bbr" ]; then
 	echo "net.core.default_qdisc=fq" > "$BBR_FQ_CONF"
-	echo fq > /proc/sys/net/core/default_qdisc
-	log "TCP BBR detected: default qdisc set to fq"
+	if echo fq > /proc/sys/net/core/default_qdisc 2>/dev/null; then
+		log "TCP BBR detected: default qdisc set to fq"
+	else
+		log "TCP BBR detected but fq qdisc unavailable (install kmod-sched)"
+	fi
 else
 	rm -f "$BBR_FQ_CONF"
 fi

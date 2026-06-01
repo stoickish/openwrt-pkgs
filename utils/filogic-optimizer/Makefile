@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=filogic-optimizer
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=7
+PKG_RELEASE:=9
 PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
 
@@ -13,6 +13,7 @@ define Package/filogic-optimizer
   CATEGORY:=Utilities
   TITLE:=Boot-time optimizer for Filogic-based routers
   URL:=https://github.com/stoickish/openwrt-pkgs
+  DEPENDS:=+kmod-sched +kmod-tcp-bbr
 endef
 
 define Package/filogic-optimizer/description
