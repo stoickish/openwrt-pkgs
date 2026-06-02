@@ -15,27 +15,28 @@ if [ "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)" != "bbr" ]; 
 	exit 0
 fi
 
+replace_fq() {
+	local d="$1"
+	case "$d" in
+		*[!A-Za-z0-9._-]*) return ;;
+	esac
+	local root_qdisc
+	root_qdisc=$(tc qdisc show dev "$d" 2>/dev/null | head -1 | awk '{print $2}')
+	case "$root_qdisc" in
+		mq|fq_codel)
+			if tc qdisc replace dev "$d" root fq 2>/dev/null; then
+				log "$d: replaced $root_qdisc with fq"
+			else
+				log "$d: failed to replace $root_qdisc with fq"
+			fi
+			;;
+	esac
+}
+
 dev="$DEVICE"
-if [ -z "$dev" ]; then
-	log "no device in ifup event — skipping"
-	exit 0
-fi
+[ -n "$dev" ] && replace_fq "$dev"
 
-case "$dev" in
-	*[!A-Za-z0-9._-]*) log "skipping suspicious interface name: $dev"; exit 0 ;;
-esac
-
-root_qdisc=$(tc qdisc show dev "$dev" 2>/dev/null | head -1 | awk '{print $2}')
-
-case "$root_qdisc" in
-	mq|fq_codel)
-		if tc qdisc replace dev "$dev" root fq 2>/dev/null; then
-			log "$dev: replaced $root_qdisc with fq"
-		else
-			log "$dev: failed to replace $root_qdisc with fq"
-		fi
-		;;
-	*)
-		log "$dev: root qdisc is $root_qdisc — skipping"
-		;;
-esac
+for eth in /sys/class/net/eth*; do
+	[ -e "$eth" ] || continue
+	replace_fq "${eth##*/}"
+done
