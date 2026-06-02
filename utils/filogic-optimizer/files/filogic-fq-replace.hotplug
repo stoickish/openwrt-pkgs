@@ -10,8 +10,16 @@
 
 log() { logger -t filogic-fq-replace "$1"; }
 
+if [ "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)" != "bbr" ]; then
+	log "BBR not active — skipping fq replacement"
+	exit 0
+fi
+
 dev="$DEVICE"
-[ -n "$dev" ] || exit 0
+if [ -z "$dev" ]; then
+	log "no device in ifup event — skipping"
+	exit 0
+fi
 
 case "$dev" in
 	*[!A-Za-z0-9._-]*) log "skipping suspicious interface name: $dev"; exit 0 ;;
@@ -23,6 +31,11 @@ case "$root_qdisc" in
 	mq|fq_codel)
 		if tc qdisc replace dev "$dev" root fq 2>/dev/null; then
 			log "$dev: replaced $root_qdisc with fq"
+		else
+			log "$dev: failed to replace $root_qdisc with fq"
 		fi
+		;;
+	*)
+		log "$dev: root qdisc is $root_qdisc — skipping"
 		;;
 esac
