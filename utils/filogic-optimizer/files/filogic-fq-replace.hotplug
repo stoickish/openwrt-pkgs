@@ -36,7 +36,7 @@ replace_fq() {
 dev="$DEVICE"
 [ -n "$dev" ] && replace_fq "$dev"
 
-for eth in /sys/class/net/eth*; do
-	[ -e "$eth" ] || continue
-	replace_fq "${eth##*/}"
+for iface in /sys/class/net/*; do
+	[ -e "$iface/device" ] || continue
+	replace_fq "${iface##*/}"
 done
