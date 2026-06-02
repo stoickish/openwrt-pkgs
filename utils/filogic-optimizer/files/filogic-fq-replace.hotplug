@@ -1,0 +1,28 @@
+#!/bin/sh
+# /etc/hotplug.d/iface/15-filogic-fq-replace
+#
+# Replace mq/fq_codel root qdiscs with fq on ifup.
+# The kernel auto-attaches mq (with fq_codel children) to multi-queue NICs
+# regardless of net.core.default_qdisc. This script replaces them with fq
+# for optimal BBR pacing. SQM-managed interfaces (cake, etc.) are untouched.
+
+[ "$ACTION" = "ifup" ] || exit 0
+
+log() { logger -t filogic-fq-replace "$1"; }
+
+dev="$DEVICE"
+[ -n "$dev" ] || exit 0
+
+case "$dev" in
+	*[!A-Za-z0-9._-]*) log "skipping suspicious interface name: $dev"; exit 0 ;;
+esac
+
+root_qdisc=$(tc qdisc show dev "$dev" 2>/dev/null | head -1 | awk '{print $2}')
+
+case "$root_qdisc" in
+	mq|fq_codel)
+		if tc qdisc replace dev "$dev" root fq 2>/dev/null; then
+			log "$dev: replaced $root_qdisc with fq"
+		fi
+		;;
+esac

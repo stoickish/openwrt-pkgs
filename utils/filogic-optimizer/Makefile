@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=filogic-optimizer
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=9
+PKG_RELEASE:=10
 PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
 
@@ -13,7 +13,7 @@ define Package/filogic-optimizer
   CATEGORY:=Utilities
   TITLE:=Boot-time optimizer for Filogic-based routers
   URL:=https://github.com/stoickish/openwrt-pkgs
-  DEPENDS:=+kmod-sched +kmod-tcp-bbr
+  DEPENDS:=+kmod-sched +kmod-tcp-bbr +iproute2-tc
 endef
 
 define Package/filogic-optimizer/description
@@ -37,6 +37,8 @@ define Package/filogic-optimizer/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/filogic-optimizer.init $(1)/etc/init.d/filogic-optimizer
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
+	$(INSTALL_BIN) ./files/filogic-fq-replace.hotplug \
+		$(1)/etc/hotplug.d/iface/15-filogic-fq-replace
 	$(INSTALL_BIN) ./files/filogic-wed-offload.hotplug \
 		$(1)/etc/hotplug.d/iface/20-filogic-wed-offload
 endef

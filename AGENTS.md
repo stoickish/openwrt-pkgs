@@ -91,3 +91,5 @@ Shell script package, no compilation. Runs once at boot (START=13, before networ
 **Init ordering:** `START=13` — fan and ASPM need no network, so the procd service runs right after `sysfsutils`/`sysctl` (both `START=11`).
 
 **BBR + fq qdisc pairing:** When `kmod-tcp-bbr` is installed (detected via `/proc/sys/net/ipv4/tcp_congestion_control`), the script sets `net.core.default_qdisc=fq` both live and persistently (`/etc/sysctl.d/13-filogic-bbr-fq.conf`). The `fq` qdisc lives in `kmod-sched` (OpenWrt's "Extra traffic schedulers"), which is a hard `DEPENDS` in the Makefile. The script checks the write's exit status — if `fq` is unavailable it logs an error rather than falsely claiming success.
+
+**fq qdisc replacement:** The kernel auto-attaches `mq` (with `fq_codel` children) to multi-queue NICs regardless of `default_qdisc`. `/etc/hotplug.d/iface/15-filogic-fq-replace` (installed from `files/filogic-fq-replace.hotplug`) fires on every `ifup` and replaces `mq` or `fq_codel` root qdiscs with `fq` via `tc qdisc replace`. SQM-managed interfaces (cake, etc.) are untouched. Requires `iproute2-tc` for the `tc` command.
