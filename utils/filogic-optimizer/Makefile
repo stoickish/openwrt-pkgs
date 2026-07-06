@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=filogic-optimizer
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=16
+PKG_RELEASE:=17
 PKG_LICENSE:=BSD-3-Clause
 PKG_MAINTAINER:=https://github.com/stoickish
 
@@ -25,6 +25,7 @@ define Package/filogic-optimizer/description
   - TCP BBR congestion control (auto-detected if kmod-tcp-bbr is installed)
   - WED hardware flow offload via nftables FLOWOFFLOAD (all platforms),
     applied via hotplug when the lan interface comes up — no polling
+  - WiFi AQL (Airtime Queue Limits) tuning for mt76 PHYs
 endef
 
 # No compilation needed — shell script package

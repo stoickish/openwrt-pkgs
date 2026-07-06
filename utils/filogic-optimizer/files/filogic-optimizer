@@ -28,4 +28,17 @@ if grep -qaE "sdg-873[34]" /proc/device-tree/compatible 2>/dev/null; then
 	echo 75000 > "$THERMAL_BASE/trip_point_0_temp"
 fi
 
+# ── WiFi AQL (Airtime Queue Limits) ────────────────────────────────────────
+for phy in $(find /sys/kernel -name 'phy[0-9]' 2>/dev/null); do
+	[ -f "$phy/aql_txq_limit" ] || continue
+	for q in 0 1 2 3; do
+		echo "$q 1500 1500" > "$phy/aql_txq_limit"
+	done
+	echo 8000 > "$phy/aql_threshold"
+	echo "fq_limit 10240"           > "$phy/aqm"
+	echo "fq_quantum 256"           > "$phy/aqm"
+	echo "fq_memory_limit 33554432" > "$phy/aqm"
+	log "WiFi AQL: tuned $(basename "$phy")"
+done
+
 exit 0
